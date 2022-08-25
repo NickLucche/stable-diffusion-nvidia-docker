@@ -37,4 +37,5 @@ By default, the half-precision/fp16 model is loaded. This is the recommended app
  - [ ] allow other input modalities (images)
  - [ ] move model to specifiec GPU number (env variable)
  - [ ] multi-gpu support (PipelineParallel)
+ - [ ] dump and clear prompt history
  - [ ] test on older cudnn
