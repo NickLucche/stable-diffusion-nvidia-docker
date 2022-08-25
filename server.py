@@ -31,9 +31,9 @@ demo = gr.Interface(
     ],
     outputs=[gr.Gallery(show_label=False).style(grid=2, container=True), gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True).style(rounded=True)],
     allow_flagging="never",
+    # sample prompt from https://strikingloo.github.io/DALL-E-2-prompt-guide
     examples=[
-        ["A dream of a distant galaxy, by Caspar David Friedrich, matte painting trending on artstation HQ"]
+        ["A digital illustration of a medieval town, 4k, detailed, trending in artstation, fantasy"]
     ],
 )
-# FIXME this probably prevents connections from outside source (outside container, so we set it to true)
 demo.launch(share=False)

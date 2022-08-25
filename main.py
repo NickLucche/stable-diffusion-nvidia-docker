@@ -24,8 +24,7 @@ def image_grid(imgs, rows, cols):
     return grid
 
 
-# TODO config file for token, fp16 loading, gpu
-TOKEN = os.environ.get("TOKEN", None)  # "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"
+TOKEN = os.environ.get("TOKEN", None)
 fp16 = bool(os.environ.get("FP16", True))
 if TOKEN is None:
     raise Exception(
@@ -43,7 +42,7 @@ pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
 safety: StableDiffusionSafetyChecker = pipe.safety_checker
 if torch.cuda.is_available():
     print(f"Moving model to {torch.cuda.get_device_name()}..")
-    pipe.to("cuda")
+    pipe.to("cuda:0")
 print("Ready!")
 
 
