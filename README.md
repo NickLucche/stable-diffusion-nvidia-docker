@@ -10,7 +10,10 @@ I also took the liberty of throwing in a simple web UI (made with gradio) to wra
 
 # Installation
 
-First of all, make sure to have docker and nvidia-docker installed in your machine (Windows users: [install WSL/Ubuntu](https://stackoverflow.com/a/56783810) from store->install [docker](https://docs.docker.com/desktop/windows/wsl/)->install [nvidia docker](https://docs.nvidia.com/cuda/wsl-user-guide/index.html#cuda-support-for-wsl2)). 
+First of all, make sure to have docker and nvidia-docker installed in your machine 
+
+**Windows users**: [install WSL/Ubuntu](https://stackoverflow.com/a/56783810) from store->install [docker](https://docs.docker.com/desktop/windows/wsl/) and start it->update Windows to version 21H2 (from update center)->test out [GPU-support](https://docs.nvidia.com/cuda/wsl-user-guide/index.html#cuda-support-for-wsl2) (a simple nvidia-smi in WSL should do). 
+
 The easiest way to try out the model is to simply use the pre-built image at `nicklucche/stable-diffusion`.   
 Note that you will need a huggingface token, you can get yours at https://huggingface.co/settings/tokens after registering for free on their website.
 
@@ -19,7 +22,7 @@ My advice is that you start the container with:
 `docker run --name stable-diffusion --gpus all -it -e TOKEN=<YOUR_TOKEN> -p 7860:7860 nicklucche/stable-diffusion` 
 
 the *first time* you run it, as it will download the model weights (can take a few minutes to do so) and store them on disk (as long as you don't delete the container).
-Then you can simply do `docker stop stable-diffusion` to stop the container and `docker start stable-diffusion` to bring it back up.
+Then you can simply do `docker stop stable-diffusion` to stop the container and `docker start stable-diffusion` to bring it back up whenever you need.
 
 Once the init phase is finished a message will pop-up in your terminal (`docker logs stable-diffusion`) and you should be able to head to http://localhost:7860/ in your favorite browser and see something like this:
 
