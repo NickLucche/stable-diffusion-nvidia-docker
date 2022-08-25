@@ -1,6 +1,6 @@
 A friend of mine working in art/design wanted to try out [Stable Diffusion](https://stability.ai/blog/stable-diffusion-public-release) on his own GPU-equipped PC, but he doesn't know much about coding, so I thought that baking a quick docker build was an easy way for me to help him out with his experiments. This repo holds the files that go into that build.
 
-I also took the liberty of throwing in a simple web UI (made with gradio) to wrap the model. Peraphs we can evolve it a bit to offer a few more functionalities (see TODO).
+I also took the liberty of throwing in a simple web UI (made with gradio) to wrap the model. Perhaps we can evolve it a bit to offer a few more functionalities (see TODO).
 
 # Requirements
  - OS: Ubuntu (tested on 20.04) or Windows
@@ -10,18 +10,18 @@ I also took the liberty of throwing in a simple web UI (made with gradio) to wra
 
 # Installation
 
-First of all, make sure to have docker installed in your machine 
-The easiest way to try 
-Note that in order to get your token, you must fist register (for free) to huggingface website and only then head to https://huggingface.co/settings/tokens.
+First of all, make sure to have docker and nvidia-docker installed in your machine (windows users: install WSL/Ubuntu from store->install nvidia docker). 
+The easiest way to try out the model is to simply use the pre-built image at `nicklucche/stable-diffusion`.   
+Note that you will need a huggingface token, you can get yours at https://huggingface.co/settings/tokens after registering for free on their website.
 
-My advice is that you start the container with
+My advice is that you start the container with:
 
-`docker run --name stable-diffusion --gpus all -it -e TOKEN=<YOUR_TOKEN> -p 7860:7860 stable-diffusion` 
+`docker run --name stable-diffusion --gpus all -it -e TOKEN=<YOUR_TOKEN> -p 7860:7860 nicklucche/stable-diffusion` 
 
-the *first time* you run it, as it will download the model weights (can take a few minutes to do so).
+the *first time* you run it, as it will download the model weights (can take a few minutes to do so) and store them on disk (as long as you don't delete the container).
 Then you can simply do `docker stop stable-diffusion` to stop the container and `docker start stable-diffusion` to bring it back up.
 
-Once the init phase is finished, you should be able to head to http://localhost:7860/ in your favorite browser (a message will pop-up in your terminal) and see something like this:
+Once the init phase is finished a message will pop-up in your terminal (`docker logs stable-diffusion`) and you should be able to head to http://localhost:7860/ in your favorite browser and see something like this:
 
 IMAGE
 
@@ -32,6 +32,9 @@ By default, the half-precision/fp16 model is loaded. This is the recommended app
 
 # Samples
 
+The internet is full of these, but I felt I couldn't put up this repo without sharing a few of "my own"..  
+
+IMAGES
 
 # TODO
  - [ ] allow other input modalities (images)
