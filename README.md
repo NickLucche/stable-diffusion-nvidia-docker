@@ -1,4 +1,4 @@
-A friend of mine working in art/design wanted to try out [Stable Diffusion](https://stability.ai/blog/stable-diffusion-public-release) on his own GPU-equipped PC, but he doesn't know much about coding, so I thought that baking a quick docker build was an easy way for me to help him out with his experiments. This repo holds the files that go into that build.
+A friend of mine working in art/design wanted to try out [Stable Diffusion](https://stability.ai/blog/stable-diffusion-public-release) on his own GPU-equipped PC, but he doesn't know much about coding, so I thought that baking a quick docker build was an easy way to help him out. This repo holds the files that go into that build.
 
 I also took the liberty of throwing in a simple web UI (made with gradio) to wrap the model. Perhaps we can evolve it a bit to offer a few more functionalities (see TODO).
 
@@ -10,7 +10,7 @@ I also took the liberty of throwing in a simple web UI (made with gradio) to wra
 
 # Installation
 
-First of all, make sure to have docker and nvidia-docker installed in your machine (windows users: install WSL/Ubuntu from store->install nvidia docker). 
+First of all, make sure to have docker and nvidia-docker installed in your machine (Windows users: [install WSL/Ubuntu](https://stackoverflow.com/a/56783810) from store->install [docker](https://docs.docker.com/desktop/windows/wsl/)->install [nvidia docker](https://docs.nvidia.com/cuda/wsl-user-guide/index.html#cuda-support-for-wsl2)). 
 The easiest way to try out the model is to simply use the pre-built image at `nicklucche/stable-diffusion`.   
 Note that you will need a huggingface token, you can get yours at https://huggingface.co/settings/tokens after registering for free on their website.
 
@@ -36,7 +36,7 @@ The internet is full of these, but I felt I couldn't put up this repo without sh
 
 IMAGES
 
-# TODO
+## TODO
  - [ ] allow other input modalities (images)
  - [ ] move model to specifiec GPU number (env variable)
  - [ ] multi-gpu support (PipelineParallel)
