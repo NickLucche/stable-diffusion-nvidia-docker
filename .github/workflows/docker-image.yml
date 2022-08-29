@@ -3,7 +3,9 @@ name: Docker Build and Push CI
 on:
   push:
     branches: ['master']
-
+    paths: 
+      - '**.py'
+      - 'Dockerfile'
 jobs:
   docker:
     runs-on: ubuntu-latest
