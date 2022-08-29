@@ -7,12 +7,13 @@ I also took the liberty of throwing in a simple web UI (made with gradio) to wra
  - Nvidia GPU with at least 6GB vRAM (gtx 700 onward, please refer [here](https://docs.nvidia.com/deeplearning/cudnn/support-matrix/index.html)). Mind that the bigger the image size (or the number of images) you want to dream, the more memory you're gonna need. For reference, dreaming a 256x256 image should take up ~5gb, while a 512x512 around 7gb. 
  - Free Disk space > 2.8gb
  - Docker and Nvidia-docker.
+ - HuggingFace account as well as registration to this repository https://huggingface.co/CompVis/stable-diffusion-v1-4 (simply click on `Access Repository`).
 
 # Installation
 
-First of all, make sure to have docker and nvidia-docker installed in your machine 
+First of all, make sure to have docker and nvidia-docker installed in your machine.
 
-**Windows users**: [install WSL/Ubuntu](https://stackoverflow.com/a/56783810) from store->install [docker](https://docs.docker.com/desktop/windows/wsl/) and start it->update Windows 10 to version 21H2 (Windows 11 should be ok as is)->test out [GPU-support](https://docs.nvidia.com/cuda/wsl-user-guide/index.html#cuda-support-for-wsl2) (a simple `nvidia-smi` in WSL should do). 
+**Windows users**: [install WSL/Ubuntu](https://stackoverflow.com/a/56783810) from store->install [docker](https://docs.docker.com/desktop/windows/wsl/) and start it->update Windows 10 to version 21H2 (Windows 11 should be ok as is)->test out [GPU-support](https://docs.nvidia.com/cuda/wsl-user-guide/index.html#cuda-support-for-wsl2) (a simple `nvidia-smi` in WSL should do). If `nvidia-smi` does not work from WSL, make sure you have updated your nvidia drivers from the official app. 
 
 The easiest way to try out the model is to simply use the pre-built image at `nicklucche/stable-diffusion`.   
 Note that you will need a huggingface token, you can get yours at https://huggingface.co/settings/tokens after registering for free on their website.
@@ -32,6 +33,8 @@ By default, the half-precision/fp16 model is loaded. This is the recommended app
 
 `docker run -e FP16=0 ...`  
 
+
+**P.S:** Feel free to open an issue for any problem you may face during installation.
 
 # Samples
 
