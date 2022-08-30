@@ -6,6 +6,36 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 import os
+from diffusers.schedulers import *
+
+# setup noise schedulers
+schedulers_names = [
+    "DDIM",
+    "PNDM",
+    "K-LMS linear",
+    "K-LMS scaled",
+]
+schedulers_cls = [
+    DDIMScheduler,
+    PNDMScheduler,
+    LMSDiscreteScheduler,
+    LMSDiscreteScheduler,
+]
+# default PNDM parameters
+schedulers_args = [
+    dict(),
+    {
+        "beta_end": 0.012,
+        "beta_schedule": "scaled_linear",
+        "beta_start": 0.00085,
+        "num_train_timesteps": 1000,
+        "skip_prk_steps": True,
+    },
+    dict(),
+    dict(beta_schedule="scaled_linear"),
+]
+# scheduler_name -> (scheduler_class, scheduler_args)
+schedulers = dict(zip(schedulers_names, zip(schedulers_cls, schedulers_args)))
 
 
 def dummy_checker(images, **kwargs):
@@ -33,6 +63,8 @@ if TOKEN is None:
 
 print("Loading model..")
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
+
+# If you are limited by GPU memory and have less than 10GB of GPU RAM available, please make sure to load the StableDiffusionPipeline in float16 precision
 pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
     "CompVis/stable-diffusion-v1-4",
     revision="fp16" if fp16 else None,
@@ -55,6 +87,7 @@ def inference(
     guidance_scale=7,
     seed=None,
     nsfw_filter=False,
+    noise_scheduler=None,
 ):
     # for repeatable results
     generator = (
@@ -63,11 +96,15 @@ def inference(
         else None
     )
 
-    # If you are limited by GPU memory and have less than 10GB of GPU RAM available, please make sure to load the StableDiffusionPipeline in float16 precision
     if nsfw_filter:
         pipe.safety_checker = safety
     else:
         pipe.safety_checker = dummy_checker
+
+    # set noise scheduler for inference
+    if noise_scheduler is not None and noise_scheduler in schedulers:
+        scls, skwargs = schedulers[noise_scheduler]
+        pipe.scheduler = scls(**skwargs)
 
     prompt = [prompt] * num_images
     # number of denoising steps run during inference (the higher the better)
