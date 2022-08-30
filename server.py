@@ -1,6 +1,6 @@
 import gradio as gr
 import numpy as np
-from main import inference
+from main import inference, schedulers_names
 
 prompts = []
 def dream(
@@ -15,7 +15,6 @@ def dream(
 
     # return [np.random.randn(256, 256, 3).astype(np.uint8)]*8, prompts
     return images, prompts
-
 demo = gr.Interface(
     fn=dream,
     inputs=[
@@ -28,6 +27,7 @@ demo = gr.Interface(
         gr.Number(label="Seed", precision=0),
         # gr.Checkbox(True, label="FP16"),
         gr.Checkbox(False, label="NSFW Filter"),
+        gr.Dropdown(schedulers_names, value="PNDM", label="Noise Scheduler")
     ],
     outputs=[gr.Gallery(show_label=False).style(grid=2, container=True), gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True).style(rounded=True)],
     allow_flagging="never",
