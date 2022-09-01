@@ -66,7 +66,7 @@ print("Loading model..")
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 
 # create and move model to GPU(s), defaults to GPU 0
-multi, devices = get_gpu_setting(os.environ.get("DEVICES", 0))
+multi, devices = get_gpu_setting(os.environ.get("DEVICES", "0"))
 # If you are limited by GPU memory and have less than 10GB of GPU RAM available, please make sure to load the StableDiffusionPipeline in float16 precision
 kwargs = dict(
     pretrained_model_name_or_path="CompVis/stable-diffusion-v1-4",
@@ -87,7 +87,7 @@ else:
     if len(devices):
         pipe.to(f"cuda:{devices[0]}")
 
-safety: StableDiffusionSafetyChecker = pipe.safety_checker
+# safety: StableDiffusionSafetyChecker = pipe.safety_checker
 
 print("Ready!")
 
@@ -110,15 +110,15 @@ def inference(
         else None
     )
 
-    if nsfw_filter:
-        pipe.safety_checker = safety
-    else:
-        pipe.safety_checker = dummy_checker
+    # if nsfw_filter:
+    #     pipe.safety_checker = safety
+    # else:
+    #     pipe.safety_checker = dummy_checker
 
-    # set noise scheduler for inference
-    if noise_scheduler is not None and noise_scheduler in schedulers:
-        scls, skwargs = schedulers[noise_scheduler]
-        pipe.scheduler = scls(**skwargs)
+    # # set noise scheduler for inference
+    # if noise_scheduler is not None and noise_scheduler in schedulers:
+    #     scls, skwargs = schedulers[noise_scheduler]
+    #     pipe.scheduler = scls(**skwargs)
 
     prompt = [prompt] * num_images
     # number of denoising steps run during inference (the higher the better)
