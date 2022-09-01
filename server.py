@@ -29,6 +29,7 @@ demo = gr.Interface(
         gr.Checkbox(False, label="NSFW Filter"),
         gr.Dropdown(schedulers_names, value="PNDM", label="Noise Scheduler")
     ],
+    # TODO set prompts as default value 
     outputs=[gr.Gallery(show_label=False).style(grid=2, container=True), gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True).style(rounded=True)],
     allow_flagging="never",
     # sample prompt from https://strikingloo.github.io/DALL-E-2-prompt-guide

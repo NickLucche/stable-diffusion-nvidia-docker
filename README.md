@@ -51,7 +51,8 @@ The internet is full of these, but I felt I couldn't put up this repo without sh
 
 ## TODO
  - [ ] allow other input modalities (images)
- - [ ] move model to specifiec GPU number (env variable)
- - [ ] multi-gpu support (PipelineParallel)
+ - [x] move model to specifiec GPU number (env variable)
+ - [x] multi-gpu support (data parallel)
+ - [ ] multi-gpu support (PipelineParallel/model parallel)
  - [ ] dump and clear prompt history
  - [ ] test on older cudnn

@@ -7,6 +7,7 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
 )
 import os
 from diffusers.schedulers import *
+from utils import StableDiffusionContainer, get_gpu_setting
 
 # setup noise schedulers
 schedulers_names = [
@@ -64,17 +65,30 @@ if TOKEN is None:
 print("Loading model..")
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 
+# create and move model to GPU(s), defaults to GPU 0
+multi, devices = get_gpu_setting(os.environ.get("DEVICES", 0))
 # If you are limited by GPU memory and have less than 10GB of GPU RAM available, please make sure to load the StableDiffusionPipeline in float16 precision
-pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
-    "CompVis/stable-diffusion-v1-4",
+kwargs = dict(
+    pretrained_model_name_or_path="CompVis/stable-diffusion-v1-4",
     revision="fp16" if fp16 else None,
     torch_dtype=torch.float16 if fp16 else None,
     use_auth_token=TOKEN,
 )
+
+if multi:
+    for n in devices:
+        print(f"Creating and moving model to {torch.cuda.get_device_name(n)}..")
+    # "data parallel", replicate the model on multiple gpus, each is handled by a different process
+    pipe: StableDiffusionContainer = StableDiffusionContainer.from_pretrained(
+        devices, **kwargs
+    )
+else:
+    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(**kwargs)
+    if len(devices):
+        pipe.to(f"cuda:{devices[0]}")
+
 safety: StableDiffusionSafetyChecker = pipe.safety_checker
-if torch.cuda.is_available():
-    print(f"Moving model to {torch.cuda.get_device_name()}..")
-    pipe.to("cuda:0")
+
 print("Ready!")
 
 
