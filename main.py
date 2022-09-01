@@ -7,7 +7,7 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
 )
 import os
 from diffusers.schedulers import *
-from utils import StableDiffusionContainer, get_gpu_setting
+from utils import StableDiffusionMultiProcessing, get_gpu_setting
 
 # setup noise schedulers
 schedulers_names = [
@@ -79,7 +79,7 @@ if multi:
     for n in devices:
         print(f"Creating and moving model to {torch.cuda.get_device_name(n)}..")
     # "data parallel", replicate the model on multiple gpus, each is handled by a different process
-    pipe: StableDiffusionContainer = StableDiffusionContainer.from_pretrained(
+    pipe: StableDiffusionMultiProcessing = StableDiffusionMultiProcessing.from_pretrained(
         devices, **kwargs
     )
 else:
