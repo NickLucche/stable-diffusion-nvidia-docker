@@ -1,11 +1,11 @@
 import gradio as gr
 import numpy as np
 import torch.multiprocessing as mp
-
+from schedulers import schedulers_names
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
-    from main import inference, schedulers_names
+    from main import inference
     prompts = []
     def dream(
         prompt: str,

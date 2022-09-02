@@ -6,41 +6,8 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 import os
-from diffusers.schedulers import *
-from utils import StableDiffusionMultiProcessing, get_gpu_setting
-
-# setup noise schedulers
-schedulers_names = [
-    "DDIM",
-    "PNDM",
-    "K-LMS linear",
-    "K-LMS scaled",
-]
-schedulers_cls = [
-    DDIMScheduler,
-    PNDMScheduler,
-    LMSDiscreteScheduler,
-    LMSDiscreteScheduler,
-]
-# default PNDM parameters
-schedulers_args = [
-    dict(),
-    {
-        "beta_end": 0.012,
-        "beta_schedule": "scaled_linear",
-        "beta_start": 0.00085,
-        "num_train_timesteps": 1000,
-        "skip_prk_steps": True,
-    },
-    dict(),
-    dict(beta_schedule="scaled_linear"),
-]
-# scheduler_name -> (scheduler_class, scheduler_args)
-schedulers = dict(zip(schedulers_names, zip(schedulers_cls, schedulers_args)))
-
-
-def dummy_checker(images, **kwargs):
-    return images, False
+from utils import StableDiffusionMultiProcessing, get_gpu_setting, dummy_checker
+from schedulers import schedulers
 
 
 def image_grid(imgs, rows, cols):
@@ -76,18 +43,17 @@ kwargs = dict(
 )
 
 if multi:
-    for n in devices:
-        print(f"Creating and moving model to {torch.cuda.get_device_name(n)}..")
     # "data parallel", replicate the model on multiple gpus, each is handled by a different process
     pipe: StableDiffusionMultiProcessing = StableDiffusionMultiProcessing.from_pretrained(
         devices, **kwargs
     )
+    safety: StableDiffusionSafetyChecker = None
 else:
     pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(**kwargs)
+    safety: StableDiffusionSafetyChecker = pipe.safety_checker
     if len(devices):
         pipe.to(f"cuda:{devices[0]}")
 
-# safety: StableDiffusionSafetyChecker = pipe.safety_checker
 
 print("Ready!")
 
@@ -110,15 +76,18 @@ def inference(
         else None
     )
 
-    # if nsfw_filter:
-    #     pipe.safety_checker = safety
-    # else:
-    #     pipe.safety_checker = dummy_checker
+    if nsfw_filter:
+        pipe.safety_checker = safety
+    else:
+        pipe.safety_checker = dummy_checker
 
-    # # set noise scheduler for inference
-    # if noise_scheduler is not None and noise_scheduler in schedulers:
-    #     scls, skwargs = schedulers[noise_scheduler]
-    #     pipe.scheduler = scls(**skwargs)
+    # set noise scheduler for inference
+    if noise_scheduler is not None and noise_scheduler in schedulers:
+        if multi:
+            pipe.scheduler = noise_scheduler
+        else:
+            scls, skwargs = schedulers[noise_scheduler]
+            pipe.scheduler = scls(**skwargs)
 
     prompt = [prompt] * num_images
     # number of denoising steps run during inference (the higher the better)
