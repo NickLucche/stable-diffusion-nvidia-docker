@@ -42,6 +42,9 @@ The model can be run in a "DataParallel" fashion, meaning that it is replicated 
  - `-e DEVICES=0,1 ...` runs model on GPU 0 and 1
  - `-e DEVICES=all ...` runs model on all available GPUs
 
+Each device generates a full image, so make sure you increase the `Number of Images` slider to generate multiple images in parallel!
+(Single image generation speed won't be affected).
+
 I should also mention that adding the nsfw filter (by checking corresponding box) includes moving an additional model to GPU, so it can cause out of memory issues.
 
 **P.S:** Feel free to open an issue for any problem you may face during installation.
