@@ -47,10 +47,11 @@ if multi:
     pipe: StableDiffusionMultiProcessing = StableDiffusionMultiProcessing.from_pretrained(
         devices, **kwargs
     )
-    safety: StableDiffusionSafetyChecker = None
 else:
     pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(**kwargs)
+    # remove safety checker so it doesn't use up GPU memory
     safety: StableDiffusionSafetyChecker = pipe.safety_checker
+    pipe.safety_checker = dummy_checker
     if len(devices):
         pipe.to(f"cuda:{devices[0]}")
 
@@ -75,10 +76,12 @@ def inference(
         if seed is not None and seed > 0
         else None
     )
-
     if nsfw_filter:
-        pipe.safety_checker = safety
+        pipe.safety_checker = safety.cuda() if not multi else None
     else:
+        # remove safety network from gpu
+        if not multi:
+            safety.cpu()
         pipe.safety_checker = dummy_checker
 
     # set noise scheduler for inference

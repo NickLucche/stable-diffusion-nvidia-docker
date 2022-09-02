@@ -19,7 +19,6 @@ def get_gpu_setting(env_var: str) -> Tuple[bool, List[int]]:
     if not torch.cuda.is_available():
         print("GPU not detected! Make sure you have a GPU to reduce inference time!")
         return False, []
-    return True, [0]
     # reads user input, returns multi_gpu flag and gpu id(s)
     n = torch.cuda.device_count()
     if env_var == "all":
@@ -46,6 +45,7 @@ def cuda_inference_process(
         # disable nsfw filter by default
         model.safety_checker = dummy_checker
         # create nsfw clip filter so we can re-set it if needed
+        # TODO perhaps we can skip this if no one cares about nsfw
         safety_checker = StableDiffusionSafetyChecker(CLIPConfig(**model_kwargs.pop("clip_config")))
         out_q.put(True)
     except:
@@ -60,7 +60,12 @@ def cuda_inference_process(
             if prompts == "quit":
                 break
             elif prompts == "safety_checker":
-                model.safety_checker = safety_checker if kwargs == "clip" else dummy_checker
+                # safety checker needs to be moved to GPU (it can cause crashes)
+                if kwargs == "clip":
+                    model.safety_checker = safety_checker.to(f"cuda:{device_id}")
+                else:
+                    safety_checker = safety_checker.to(f"cpu")
+                    model.safety_checker = dummy_checker
             elif prompts == "scheduler":
                 scls, skwargs = schedulers[kwargs]
                 model.scheduler = scls(**skwargs)
@@ -100,7 +105,6 @@ class StableDiffusionMultiProcessing(object):
         prompts = [list(p) for p in np.array_split(prompts, self.n)]
         # request inference and block for result
         res = self._send_cmd(prompts, [kwargs] * self.n)
-        print("RESULT", res)
         # mimic interface
         return {"sample": [img for images in res for img in images]}
 
