@@ -6,40 +6,8 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 import os
-from diffusers.schedulers import *
-
-# setup noise schedulers
-schedulers_names = [
-    "DDIM",
-    "PNDM",
-    "K-LMS linear",
-    "K-LMS scaled",
-]
-schedulers_cls = [
-    DDIMScheduler,
-    PNDMScheduler,
-    LMSDiscreteScheduler,
-    LMSDiscreteScheduler,
-]
-# default PNDM parameters
-schedulers_args = [
-    dict(),
-    {
-        "beta_end": 0.012,
-        "beta_schedule": "scaled_linear",
-        "beta_start": 0.00085,
-        "num_train_timesteps": 1000,
-        "skip_prk_steps": True,
-    },
-    dict(),
-    dict(beta_schedule="scaled_linear"),
-]
-# scheduler_name -> (scheduler_class, scheduler_args)
-schedulers = dict(zip(schedulers_names, zip(schedulers_cls, schedulers_args)))
-
-
-def dummy_checker(images, **kwargs):
-    return images, False
+from utils import StableDiffusionMultiProcessing, get_gpu_setting, dummy_checker
+from schedulers import schedulers
 
 
 def image_grid(imgs, rows, cols):
@@ -64,17 +32,30 @@ if TOKEN is None:
 print("Loading model..")
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 
+# create and move model to GPU(s), defaults to GPU 0
+multi, devices = get_gpu_setting(os.environ.get("DEVICES", "0"))
 # If you are limited by GPU memory and have less than 10GB of GPU RAM available, please make sure to load the StableDiffusionPipeline in float16 precision
-pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
-    "CompVis/stable-diffusion-v1-4",
+kwargs = dict(
+    pretrained_model_name_or_path="CompVis/stable-diffusion-v1-4",
     revision="fp16" if fp16 else None,
     torch_dtype=torch.float16 if fp16 else None,
     use_auth_token=TOKEN,
 )
-safety: StableDiffusionSafetyChecker = pipe.safety_checker
-if torch.cuda.is_available():
-    print(f"Moving model to {torch.cuda.get_device_name()}..")
-    pipe.to("cuda:0")
+
+if multi:
+    # "data parallel", replicate the model on multiple gpus, each is handled by a different process
+    pipe: StableDiffusionMultiProcessing = StableDiffusionMultiProcessing.from_pretrained(
+        devices, **kwargs
+    )
+else:
+    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(**kwargs)
+    # remove safety checker so it doesn't use up GPU memory
+    safety: StableDiffusionSafetyChecker = pipe.safety_checker
+    pipe.safety_checker = dummy_checker
+    if len(devices):
+        pipe.to(f"cuda:{devices[0]}")
+
+
 print("Ready!")
 
 
@@ -95,16 +76,21 @@ def inference(
         if seed is not None and seed > 0
         else None
     )
-
     if nsfw_filter:
-        pipe.safety_checker = safety
+        pipe.safety_checker = safety.cuda() if not multi else None
     else:
+        # remove safety network from gpu
+        if not multi:
+            safety.cpu()
         pipe.safety_checker = dummy_checker
 
     # set noise scheduler for inference
     if noise_scheduler is not None and noise_scheduler in schedulers:
-        scls, skwargs = schedulers[noise_scheduler]
-        pipe.scheduler = scls(**skwargs)
+        if multi:
+            pipe.scheduler = noise_scheduler
+        else:
+            scls, skwargs = schedulers[noise_scheduler]
+            pipe.scheduler = scls(**skwargs)
 
     prompt = [prompt] * num_images
     # number of denoising steps run during inference (the higher the better)
