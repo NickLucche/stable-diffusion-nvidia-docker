@@ -102,6 +102,7 @@ class StableDiffusionMultiProcessing(object):
     def __call__(self, prompts, **kwargs):
         # run inference on different processes, each handles a model on a different GPU (split load evenly)
         # print("prompts!", prompts)
+        # FIXME when n_prompts < n, unused processes get an empty list as input, so we can always wait all processes 
         prompts = [list(p) for p in np.array_split(prompts, self.n)]
         # request inference and block for result
         res = self._send_cmd(prompts, [kwargs] * self.n)
