@@ -1,3 +1,4 @@
+from ctypes import Union
 import numpy as np
 from PIL import Image
 import torch
@@ -9,8 +10,8 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
-from utils import dummy_checker
-from typing import List
+from utils import ToGPUWrapper, dummy_checker, dummy_extractor
+from typing import Dict, List
 
 ## Data Parallel: each process handles a copy of the model, executed on a different device ##
 def cuda_inference_process(
@@ -98,7 +99,9 @@ class StableDiffusionMultiProcessing(object):
         return {"sample": [img for images in res for img in images]}
 
     @classmethod
-    def from_pretrained(cls, devices: List[int], **kwargs)->"StableDiffusionMultiProcessing":
+    def from_pretrained(
+        cls, devices: List[int], **kwargs
+    ) -> "StableDiffusionMultiProcessing":
         # create communication i/o "channels"
         cls.q = mp.Queue()
         cls.outq = mp.Queue()
@@ -166,3 +169,74 @@ class StableDiffusionMultiProcessing(object):
             return
         self._scheduler = value
         self._send_cmd(["scheduler"] * self.n, [value] * self.n, wait_ack=False)
+
+
+from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
+
+from diffusers.models import AutoencoderKL, UNet2DConditionModel
+from diffusers.pipeline_utils import DiffusionPipeline
+from diffusers.schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler
+
+
+class StableDiffusionModelParallel(StableDiffusionPipeline):
+    def __init__(
+        self,
+        vae: AutoencoderKL,
+        text_encoder: CLIPTextModel,
+        tokenizer: CLIPTokenizer,
+        unet: UNet2DConditionModel,
+        scheduler: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler],
+        safety_checker: StableDiffusionSafetyChecker,
+        feature_extractor: CLIPFeatureExtractor,
+        part_to_device: Dict[int, int],
+    ):
+        """
+        Model can be split into 4 main components:
+            - unet_encoder (downblocks to middle block)
+            - unet_decoder (up_blocks+)
+            - text_encoder
+            - vae
+        This class handles the components of a model that are split among multiple GPUs,
+        taking care of moving tensors and Modules to the right devices: e.g.
+        unet_encoder GPU_0 -> unet_decoder GPU_1 -> text_encoder GPU_1 -> vae GPU_0.
+        Result is eventually moved back to CPU at the end of each foward call.
+        """
+        super().__init__(
+            vae,
+            text_encoder,
+            tokenizer,
+            unet,
+            scheduler,
+            safety_checker,
+            feature_extractor,
+        )
+        # TODO do in `to()`?
+        # move each component onto the specified device
+        self.vae = ToGPUWrapper(self.vae, part_to_device[3])
+        self.text_encoder = ToGPUWrapper(self.text_encoder, part_to_device[2])
+
+        # move unet, requires a bit more work as it is chunked further into multiple parts
+        # move encoder
+        for layer in [
+            "time_proj",
+            "time_embedding",
+            "conv_in",
+            "down_blocks",
+            "mid_block",
+        ]:
+            module = getattr(self.unet, layer)
+            setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[0]))
+
+        # move decoder
+        for layer in ["up_blocks", "conv_norm_out", "conv_act", "conv_out"]:
+            module = getattr(self.unet, layer)
+            setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[1]))
+
+        self.feature_extractor = dummy_extractor
+        self.safety_checker = dummy_checker
+
+    @property
+    def device(self) -> torch.device:
+        # NOTE this overrides super so we can handle all tensors devices manually, all `to(self.device)`
+        # done in the forward pass become a no-op
+        return None
