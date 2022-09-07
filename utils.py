@@ -89,6 +89,7 @@ class ModelParts2GPUsAssigner:
         self.G = np.array(G, dtype=np.uint16)
         # model components memory usage, fixed order: unet_e, unet_d, text_encoder, vae
         # TODO make dynamic using `model_size_Mb(model.text_encoder)`,
+        # BUG this wont work for fp32, sizes are bigger
         self.W = np.arange([666, 975, 235, 160])
 
         # max number of models you can have considering pooled VRam as it if was a single GPU,
@@ -96,6 +97,8 @@ class ModelParts2GPUsAssigner:
         self._max_models = min(
             multiprocessing.cpu_count(), np.floor(self.G.sum() / self.W.sum())
         )
+        if self._max_models == 0:
+            raise Exception("You don't have enough combined VRam to host a single model!")
 
     def state_evaluation(self, state: np.ndarray):
         """
@@ -168,5 +171,15 @@ class ModelParts2GPUsAssigner:
         # initial empty assignment, #GPUs x #model_parts
         I = np.zeros((self.N, 4), dtype=np.uint16)
         # returns a valid assignment of split component to devices
-        n_models, assignment = self.find_best_assignment(I, 0)
-        return n_models, assignment
+        n_models, ass = self.find_best_assignment(I, 0)
+        # format output into a [{model_component->device}], one per model to create
+        model_ass = [{i: -1 for i in range(4)} for _ in range(n_models)]
+        for comp in range(4):
+            for dev in range(self.N):
+                # this might say "component_0 to device_1 3 times"
+                for _ in range(ass[dev, comp]):
+                    for m in model_ass:
+                        # assign to model that doesn't have an allocated component yet
+                        if m[comp] == -1:
+                            m[comp] = dev
+        return model_ass

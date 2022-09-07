@@ -11,23 +11,27 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
 )
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 from utils import ToGPUWrapper, dummy_checker, dummy_extractor
-from typing import Dict, List
+from typing import Any, Dict, List
 
 ## Data Parallel: each process handles a copy of the model, executed on a different device ##
 def cuda_inference_process(
-    device_id: int, in_q: mp.Queue, out_q: mp.Queue, model_kwargs
+    device_id: int, in_q: mp.Queue, out_q: mp.Queue, model_kwargs: Dict[Any, Any]
 ):
     """Code executed by the torch.multiprocessing process, handling inference on device `device_id`.
     It's a simple loop in which the worker pulls data from a shared input queue, and puts result
     into an output queue.
     """
+    mp_ass: Dict[int, int]= model_kwargs.pop("mp_assignment", None)
     try:
         print(
             f"Creating and moving model to cuda:{device_id} ({torch.cuda.get_device_name(device_id)}).."
         )
-        model: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
-            **model_kwargs
-        ).to(f"cuda:{device_id}")
+        if mp_ass is None:
+            model: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
+                **model_kwargs
+            ).to(f"cuda:{device_id}")
+        else:
+            model = StableDiffusionModelParallel.from_pretrained(**model_kwargs)
         # disable nsfw filter by default
         model.safety_checker = dummy_checker
         # create nsfw clip filter so we can re-set it if needed

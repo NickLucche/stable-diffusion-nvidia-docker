@@ -6,13 +6,14 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 import os
-from utils import get_gpu_setting, dummy_checker
-from parallel import StableDiffusionMultiProcessing
+from utils import ModelParts2GPUsAssigner, get_gpu_setting, dummy_checker
+from parallel import StableDiffusionModelParallel, StableDiffusionMultiProcessing
 from schedulers import schedulers
 
 
 TOKEN = os.environ.get("TOKEN", None)
 fp16 = bool(os.environ.get("FP16", True))
+MP = bool(os.environ.get("MODEL_PARALLEL", False))
 if TOKEN is None:
     raise Exception(
         "Unable to read huggingface token! Make sure to get your token here https://huggingface.co/settings/tokens and set the corresponding env variable with `docker run --env TOKEN=<YOUR_TOKEN>`"
@@ -31,15 +32,36 @@ kwargs = dict(
     use_auth_token=TOKEN,
 )
 
+model_ass = None
+if MP:
+    # setup for model parallel: find model parts->gpus assignment
+    print(
+        f"Looking for a valid assignment in which to split model parts to device(s): {devices}"
+    )
+    ass_finder = ModelParts2GPUsAssigner(devices)
+    model_ass = ass_finder(devices)
+    if not len(model_ass):
+        raise Exception(
+            "Unable to find a valid assignment of model parts to GPUs! This could be bad luck in sampling!"
+        )
+    print("Assignment:", model_ass)
+
 if multi:
     # "data parallel", replicate the model on multiple gpus, each is handled by a different process
-    pipe = StableDiffusionMultiProcessing.from_pretrained(devices, **kwargs)
-    
+    pipe = StableDiffusionMultiProcessing.from_pretrained(
+        devices, model_parallel_assignment=model_ass, **kwargs
+    )
 else:
-    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(**kwargs)
+    if MP:
+        # FIXME add this parameter
+        pipe = StableDiffusionModelParallel.from_pretrained(model_parallel_assignment=model_ass, **kwargs)
+    else:
+        pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
+            **kwargs
+        )
     # remove safety checker so it doesn't use up GPU memory
     safety: StableDiffusionSafetyChecker = pipe.safety_checker
-    # TODO remove CLIP feature extractor, pre-processing step for safety checker
+    # TODO remove CLIP feature extractor, pre-processing step for safety checker, make util
     pipe.safety_checker = dummy_checker
     if len(devices):
         pipe.to(f"cuda:{devices[0]}")
