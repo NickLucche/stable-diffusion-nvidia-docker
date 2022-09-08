@@ -4,7 +4,9 @@ import torch.nn as nn
 from PIL import Image
 import numpy as np
 import multiprocessing
-
+from diffusers import StableDiffusionPipeline
+from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
+from transformers import CLIPFeatureExtractor
 
 def image_grid(imgs, rows, cols):
     assert len(imgs) == rows * cols
@@ -26,6 +28,12 @@ def dummy_checker(images, *args, **kwargs):
 def dummy_extractor(images, *args, **kwargs):
     return images
 
+def remove_nsfw(model: StableDiffusionPipeline)->Tuple[StableDiffusionSafetyChecker, CLIPFeatureExtractor]:
+    nsfw_model: StableDiffusionSafetyChecker = model.safety_checker
+    model.safety_checker = dummy_checker
+    extr = model.feature_extractor 
+    model.feature_extractor = dummy_extractor
+    return nsfw_model.cpu(), extr
 
 def get_gpu_setting(env_var: str) -> Tuple[bool, List[int]]:
     if not torch.cuda.is_available():
@@ -86,6 +94,8 @@ class ModelParts2GPUsAssigner:
         # so that the rest can be used for storing intermediate results
         # TODO unet uses way more than the other components, balance that out
         G = [int(get_free_memory_Mb(d) * 0.8) for d in devices]
+        # FIXME G is kind of a function of n_models itself, as the more models you have
+        # the more memory you will be using for storing intermediate results...  
         self.G = np.array(G, dtype=np.uint16)
         # model components memory usage, fixed order: unet_e, unet_d, text_encoder, vae
         # TODO make dynamic using `model_size_Mb(model.text_encoder)`,
@@ -172,6 +182,7 @@ class ModelParts2GPUsAssigner:
         I = np.zeros((self.N, 4), dtype=np.uint16)
         # returns a valid assignment of split component to devices
         n_models, ass = self.find_best_assignment(I, 0)
+        print(f"Search has found that {n_models} can be split over {self.N} devices!")
         # format output into a [{model_component->device}], one per model to create
         model_ass = [{i: -1 for i in range(4)} for _ in range(n_models)]
         for comp in range(4):

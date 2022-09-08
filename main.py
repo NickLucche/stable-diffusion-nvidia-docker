@@ -6,7 +6,7 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 import os
-from utils import ModelParts2GPUsAssigner, get_gpu_setting, dummy_checker
+from utils import ModelParts2GPUsAssigner, get_gpu_setting, dummy_checker, remove_nsfw
 from parallel import StableDiffusionModelParallel, StableDiffusionMultiProcessing
 from schedulers import schedulers
 
@@ -33,7 +33,8 @@ kwargs = dict(
 )
 
 model_ass = None
-if MP:
+# ModelParallel single gpu makes no sense, we ignore it
+if MP and len(devices)>1:
     # setup for model parallel: find model parts->gpus assignment
     print(
         f"Looking for a valid assignment in which to split model parts to device(s): {devices}"
@@ -44,25 +45,25 @@ if MP:
         raise Exception(
             "Unable to find a valid assignment of model parts to GPUs! This could be bad luck in sampling!"
         )
-    print("Assignment:", model_ass)
+    print("Assignments:", model_ass)
 
 if multi:
-    # "data parallel", replicate the model on multiple gpus, each is handled by a different process
+    # DataParallel: one process *per GPU* (each has a copy of the model)
+    # ModelParallel: one process *per model*, each model (possibly) on multiple GPUs
+    n_procs = len(devices) if not MP else len(model_ass)
     pipe = StableDiffusionMultiProcessing.from_pretrained(
-        devices, model_parallel_assignment=model_ass, **kwargs
+        n_procs, devices, model_parallel_assignment=model_ass, **kwargs
     )
 else:
-    if MP:
-        # FIXME add this parameter
-        pipe = StableDiffusionModelParallel.from_pretrained(model_parallel_assignment=model_ass, **kwargs)
-    else:
-        pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
-            **kwargs
-        )
+    # if MP:
+        # pipe = StableDiffusionModelParallel.from_pretrained(**kwargs).to(model_ass)
+        # safety, safety_extractor = remove_nsfw(pipe)
+    # else:
+    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
+        **kwargs
+    )
     # remove safety checker so it doesn't use up GPU memory
-    safety: StableDiffusionSafetyChecker = pipe.safety_checker
-    # TODO remove CLIP feature extractor, pre-processing step for safety checker, make util
-    pipe.safety_checker = dummy_checker
+    safety, safety_extractor = remove_nsfw(pipe)
     if len(devices):
         pipe.to(f"cuda:{devices[0]}")
 

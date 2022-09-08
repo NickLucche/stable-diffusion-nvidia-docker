@@ -10,30 +10,34 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
-from utils import ToGPUWrapper, dummy_checker, dummy_extractor
+from utils import ToGPUWrapper, dummy_checker, dummy_extractor, remove_nsfw
 from typing import Any, Dict, List
 
 ## Data Parallel: each process handles a copy of the model, executed on a different device ##
 def cuda_inference_process(
-    device_id: int, in_q: mp.Queue, out_q: mp.Queue, model_kwargs: Dict[Any, Any]
+    worker_id: int, devices: List[torch.device], in_q: mp.Queue, out_q: mp.Queue, model_kwargs: Dict[Any, Any]
 ):
     """Code executed by the torch.multiprocessing process, handling inference on device `device_id`.
     It's a simple loop in which the worker pulls data from a shared input queue, and puts result
     into an output queue.
     """
-    mp_ass: Dict[int, int]= model_kwargs.pop("mp_assignment", None)
+    mp_ass: Dict[int, int] = model_kwargs.pop("model_parallel_assignment", None)
     try:
-        print(
-            f"Creating and moving model to cuda:{device_id} ({torch.cuda.get_device_name(device_id)}).."
-        )
         if mp_ass is None:
+            device_id = devices[worker_id]
+            print(
+                f"Creating and moving model to cuda:{device_id} ({torch.cuda.get_device_name(device_id)}).."
+            )
             model: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
                 **model_kwargs
             ).to(f"cuda:{device_id}")
         else:
-            model = StableDiffusionModelParallel.from_pretrained(**model_kwargs)
+            mp_ass = mp_ass[worker_id]
+            print("Model parallel worker component assignment:", mp_ass)
+            model = StableDiffusionModelParallel.from_pretrained(**model_kwargs).to(mp_ass)
         # disable nsfw filter by default
-        model.safety_checker = dummy_checker
+        remove_nsfw(model)
+
         # create nsfw clip filter so we can re-set it if needed
         # TODO perhaps we can skip this if no one cares about nsfw
         safety_checker = StableDiffusionSafetyChecker(
@@ -51,6 +55,9 @@ def cuda_inference_process(
             # special commands
             if prompts == "quit":
                 break
+            elif mp_ass is not None:
+                # TODO 
+                raise NotImplementedError()
             elif prompts == "safety_checker":
                 # safety checker needs to be moved to GPU (it can cause crashes)
                 if kwargs == "clip":
@@ -75,9 +82,9 @@ def cuda_inference_process(
 
 # class that handles multi-gpu models, mimicking original interface
 class StableDiffusionMultiProcessing(object):
-    def __init__(self, devices: List[int]) -> None:
+    def __init__(self, n_procs: int, devices: List[int]) -> None:
         self.devices = devices
-        self.n = len(devices)
+        self.n = n_procs
         self._safety_checker = "dummy"
         self._scheduler = "PNDM"
 
@@ -104,7 +111,7 @@ class StableDiffusionMultiProcessing(object):
 
     @classmethod
     def from_pretrained(
-        cls, devices: List[int], **kwargs
+        cls, n_processes: int, devices: List[int], **kwargs
     ) -> "StableDiffusionMultiProcessing":
         # create communication i/o "channels"
         cls.q = mp.Queue()
@@ -113,23 +120,24 @@ class StableDiffusionMultiProcessing(object):
         with open("./clip_config.pickle", "rb") as f:
             d = pickle.load(f)
         kwargs["clip_config"] = d
+
         # create models in their own process and move them to correspoding device
         cls._procs: List[mp.Process] = []
-        for d in devices:
+        for i in range(n_processes):
             p = mp.Process(
                 target=cuda_inference_process,
-                args=(d, cls.q, cls.outq, kwargs),
+                args=(i, devices, cls.q, cls.outq, kwargs),
                 daemon=False,
             )
             p.start()
             cls._procs.append(p)
 
         # wait until you move all models to their respective gpu (consistent with single mode)
-        for _ in range(len(devices)):
+        for _ in range(n_processes):
             d = cls.outq.get()
             assert d
         # cls.pipes: List[StableDiffusionPipeline] = models
-        return cls(devices)
+        return cls(n_processes, devices)
 
     def __del__(self):
         # exit and join condition
@@ -192,7 +200,6 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
         scheduler: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler],
         safety_checker: StableDiffusionSafetyChecker,
         feature_extractor: CLIPFeatureExtractor,
-        part_to_device: Dict[int, int],
     ):
         """
         Model can be split into 4 main components:
@@ -214,7 +221,8 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
             safety_checker,
             feature_extractor,
         )
-        # TODO do in `to()`?
+
+    def to(self, part_to_device: Dict[int, torch.device]):
         # move each component onto the specified device
         self.vae = ToGPUWrapper(self.vae, part_to_device[3])
         self.text_encoder = ToGPUWrapper(self.text_encoder, part_to_device[2])
@@ -235,9 +243,6 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
         for layer in ["up_blocks", "conv_norm_out", "conv_act", "conv_out"]:
             module = getattr(self.unet, layer)
             setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[1]))
-
-        self.feature_extractor = dummy_extractor
-        self.safety_checker = dummy_checker
 
     @property
     def device(self) -> torch.device:
