@@ -2,10 +2,11 @@ import gradio as gr
 import numpy as np
 import torch.multiprocessing as mp
 from schedulers import schedulers_names
+
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
-    from main import inference
+    from main import inference, MP as model_parallel
     prompts = []
     def dream(
         prompt: str,
@@ -30,7 +31,8 @@ if __name__ == "__main__":
             gr.Slider(0, 20, 7.5, step=0.5, label="Guidance Scale"),
             gr.Number(label="Seed", precision=0),
             # gr.Checkbox(True, label="FP16"),
-            gr.Checkbox(False, label="NSFW Filter"),
+            # disable nsfw filter in mp mode
+            gr.Checkbox(False, label="NSFW Filter", interactive=False if model_parallel else True),
             gr.Dropdown(schedulers_names, value="PNDM", label="Noise Scheduler")
         ],
         # TODO set prompts as default value 

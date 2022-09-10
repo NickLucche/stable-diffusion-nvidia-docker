@@ -1,4 +1,3 @@
-from ctypes import Union
 import numpy as np
 from PIL import Image
 import torch
@@ -11,11 +10,15 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
 )
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 from utils import ToGPUWrapper, dummy_checker, dummy_extractor, remove_nsfw
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Union
 
 ## Data Parallel: each process handles a copy of the model, executed on a different device ##
 def cuda_inference_process(
-    worker_id: int, devices: List[torch.device], in_q: mp.Queue, out_q: mp.Queue, model_kwargs: Dict[Any, Any]
+    worker_id: int,
+    devices: List[torch.device],
+    in_q: mp.Queue,
+    out_q: mp.Queue,
+    model_kwargs: Dict[Any, Any],
 ):
     """Code executed by the torch.multiprocessing process, handling inference on device `device_id`.
     It's a simple loop in which the worker pulls data from a shared input queue, and puts result
@@ -34,7 +37,9 @@ def cuda_inference_process(
         else:
             mp_ass = mp_ass[worker_id]
             print("Model parallel worker component assignment:", mp_ass)
-            model = StableDiffusionModelParallel.from_pretrained(**model_kwargs).to(mp_ass)
+            model = StableDiffusionModelParallel.from_pretrained(**model_kwargs).to(
+                mp_ass
+            )
         # disable nsfw filter by default
         remove_nsfw(model)
 
@@ -55,8 +60,8 @@ def cuda_inference_process(
             # special commands
             if prompts == "quit":
                 break
-            elif mp_ass is not None:
-                # TODO 
+            elif prompts == "safety_checker" and mp_ass is not None:
+                # TODO
                 raise NotImplementedError()
             elif prompts == "safety_checker":
                 # safety checker needs to be moved to GPU (it can cause crashes)
@@ -74,8 +79,10 @@ def cuda_inference_process(
         else:
             # actual inference
             # print("Inference", prompts, kwargs, model.device)
+            if kwargs["generator"] is not None and kwargs["generator"] > 0:
+                seed = kwargs["generator"]
+                kwargs["generator"] = torch.Generator(f"cuda:{device_id}" if mp_ass is None else "cpu").manual_seed(seed)
             with torch.autocast("cuda"):
-                # images = [Image.fromarray(np.random.randn(512, 512, 3))]
                 images: List[Image.Image] = model(prompts, **kwargs)["sample"]
         out_q.put(images)
 
@@ -221,6 +228,8 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
             safety_checker,
             feature_extractor,
         )
+        self._scheduler = self.scheduler
+        # self._safety_checker = self.safety_checker
 
     def to(self, part_to_device: Dict[int, torch.device]):
         # move each component onto the specified device
@@ -244,8 +253,51 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
             module = getattr(self.unet, layer)
             setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[1]))
 
+        # need to wrap scheduler.step to move sampled noise to unet gpu
+        self._wrap_scheduler_step()
+        return self
+
     @property
     def device(self) -> torch.device:
         # NOTE this overrides super so we can handle all tensors devices manually, all `to(self.device)`
         # done in the forward pass become a no-op
         return None
+
+    def _wrap_scheduler_step(self):
+        prev_foo = self._scheduler.step
+
+        def wrapper(x, i, sample: torch.Tensor, *args, **kwargs):
+            sample = sample.to(self.unet.up_blocks.device)
+            return prev_foo(x, i, sample, *args, **kwargs)
+
+        self._scheduler.step = wrapper
+
+    # override this interface for setting
+    # @property
+    # def safety_checker(self):
+    #     return self._safety_checker
+
+    # @safety_checker.setter
+    # def safety_checker(self, value):
+    #     # switch nsfw on, otherwise don't bother re-setting on processes
+    #     if self.safety_checker is None and value is not None:
+    #         self._safety_checker == value
+    #     elif self.safety_checker is not None and value is None:
+    #         self._safety_checker == None
+
+    @property
+    def scheduler(self):
+        return self._scheduler
+
+    @scheduler.setter
+    def scheduler(
+        self, value: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler]
+    ):
+        # if self.scheduler.__class__.__name__ == value.__class__.__name__:
+        # return
+        if not hasattr(self, "_scheduler"):
+            # used during init phase
+            self._scheduler = value
+        else:
+            self._scheduler = value
+            self._wrap_scheduler_step()

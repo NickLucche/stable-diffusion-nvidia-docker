@@ -5,8 +5,12 @@ from PIL import Image
 import numpy as np
 import multiprocessing
 from diffusers import StableDiffusionPipeline
-from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
+from diffusers.pipelines.stable_diffusion.safety_checker import (
+    StableDiffusionSafetyChecker,
+)
 from transformers import CLIPFeatureExtractor
+from transformers.feature_extraction_utils import BatchFeature
+
 
 def image_grid(imgs, rows, cols):
     assert len(imgs) == rows * cols
@@ -25,15 +29,25 @@ def dummy_checker(images, *args, **kwargs):
     return images, False
 
 
-def dummy_extractor(images, *args, **kwargs):
-    return images
+def dummy_extractor(images, return_tensors="pt"):
+    # print(type(images), type(images[0]))
+    if type(images) is list:
+        images = [np.array(img) for img in images]
+    data = {"pixel_values": images}
+    return BatchFeature(data=data, tensor_type=return_tensors)
 
-def remove_nsfw(model: StableDiffusionPipeline)->Tuple[StableDiffusionSafetyChecker, CLIPFeatureExtractor]:
+    return torch.from_numpy(np.array(images))
+
+
+def remove_nsfw(
+    model: StableDiffusionPipeline,
+) -> Tuple[StableDiffusionSafetyChecker, CLIPFeatureExtractor]:
     nsfw_model: StableDiffusionSafetyChecker = model.safety_checker
     model.safety_checker = dummy_checker
-    extr = model.feature_extractor 
+    extr = model.feature_extractor
     model.feature_extractor = dummy_extractor
     return nsfw_model.cpu(), extr
+
 
 def get_gpu_setting(env_var: str) -> Tuple[bool, List[int]]:
     if not torch.cuda.is_available():
@@ -54,10 +68,8 @@ def get_gpu_setting(env_var: str) -> Tuple[bool, List[int]]:
 
 
 def get_free_memory_Mb(device: int):
-    # credits to https://stackoverflow.com/a/58216793/4991653
-    r = torch.cuda.memory_reserved(0)
-    a = torch.cuda.memory_allocated(0)
-    return (r - a) / 1e6
+    # returns (free, total) device memory, in bytes
+    return torch.cuda.mem_get_info(device)[0] / 2 ** 20
 
 
 def model_size_Mb(model):
@@ -68,47 +80,74 @@ def model_size_Mb(model):
     buffer_size = 0
     for buffer in model.buffers():
         buffer_size += buffer.nelement() * buffer.element_size()
-    return (param_size + buffer_size) / 1024**2
+    return (param_size + buffer_size) / 1024 ** 2
 
 
-class ToGPUWrapper(nn.Module):
+class ToGPUWrapper(nn.Module, object):
     def __init__(self, layer: nn.Module, device: torch.device) -> None:
+        # composition design, we wrap a nn.Module, change forward
         super().__init__()
         self.device = device
         # move wrapped model to correct device
         self.layer = layer.to(device)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, *args, **kwargs):
         # move input and output to given device
-        y = self.layer(x.to(self.device))
+        # print(self.layer.__class__.__name__)
+        args = [a.to(self.device) if type(a) is torch.Tensor else a for a in args]
+        for k in kwargs:
+            if type(kwargs[k]) is torch.Tensor:
+                kwargs[k] = kwargs[k].to(self.device)
+
+        y = self.layer(x.to(self.device), *args, **kwargs)
+        # text model wraps output.. this could be made more generic
+        if self.layer.__class__.__name__ == "CLIPTextModel":
+            # getting does something like this self.to_tuple()[k]
+            y.last_hidden_state = y.last_hidden_state.to(self.device)
+            return y
         return y.to(self.device)
+
+    # FIXME this is giving recursion problems
+    # def __getattr__(self, name: str):
+    # return getattr(self.layer, name)
+
+    def __iter__(self):
+        return iter(self.layer)
+
+    def __next__(self):
+        return next(self.layer)
+
+    def decode(self, z):
+        # for vae output
+        return self.layer.decode(z.to(self.device))
 
 
 class ModelParts2GPUsAssigner:
-    def __init__(
-        self,
-        devices: List[int],
-    ) -> None:
+    def __init__(self, devices: List[int],) -> None:
         self.N = len(devices)
         # memory "budget" for each device: we consider 80% of the available GPU memory
         # so that the rest can be used for storing intermediate results
         # TODO unet uses way more than the other components, balance that out
-        G = [int(get_free_memory_Mb(d) * 0.8) for d in devices]
+        G = [int(get_free_memory_Mb(d) * 0.6) for d in devices]
+        print("Free GPU memory", G)
         # FIXME G is kind of a function of n_models itself, as the more models you have
-        # the more memory you will be using for storing intermediate results...  
+        # the more memory you will be using for storing intermediate results...
         self.G = np.array(G, dtype=np.uint16)
         # model components memory usage, fixed order: unet_e, unet_d, text_encoder, vae
         # TODO make dynamic using `model_size_Mb(model.text_encoder)`,
         # BUG this wont work for fp32, sizes are bigger
-        self.W = np.arange([666, 975, 235, 160])
+        self.W = np.array([666, 975, 235, 160])
 
         # max number of models you can have considering pooled VRam as it if was a single GPU,
         # "upper bounded" by max number of processes
+        # TODO should we make it easier to allow single model multiple gpus?
         self._max_models = min(
             multiprocessing.cpu_count(), np.floor(self.G.sum() / self.W.sum())
         )
         if self._max_models == 0:
-            raise Exception("You don't have enough combined VRam to host a single model!")
+            raise Exception(
+                "You don't have enough combined VRam to host a single model!"
+            )
 
     def state_evaluation(self, state: np.ndarray):
         """
@@ -152,7 +191,9 @@ class ModelParts2GPUsAssigner:
             state[a, 0] -= 1
         return valid
 
-    def find_best_assignment(self, state: np.ndarray, curr_n_models: int, **kwargs):
+    def find_best_assignment(
+        self, state: np.ndarray, curr_n_models: int, **kwargs
+    ) -> Tuple[int, List[np.ndarray]]:
         # try to increase the number of models until you can have no more, recursively
         if curr_n_models >= self._max_models:
             return -1, []
@@ -182,7 +223,10 @@ class ModelParts2GPUsAssigner:
         I = np.zeros((self.N, 4), dtype=np.uint16)
         # returns a valid assignment of split component to devices
         n_models, ass = self.find_best_assignment(I, 0)
-        print(f"Search has found that {n_models} can be split over {self.N} devices!")
+        ass = ass[0]
+        print(
+            f"Search has found that {n_models} model(s) can be split over {self.N} device(s)!"
+        )
         # format output into a [{model_component->device}], one per model to create
         model_ass = [{i: -1 for i in range(4)} for _ in range(n_models)]
         for comp in range(4):

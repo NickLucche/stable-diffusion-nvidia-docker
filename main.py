@@ -33,14 +33,14 @@ kwargs = dict(
 )
 
 model_ass = None
-# ModelParallel single gpu makes no sense, we ignore it
+# single-gpu multiple models currently disabled
 if MP and len(devices)>1:
     # setup for model parallel: find model parts->gpus assignment
     print(
         f"Looking for a valid assignment in which to split model parts to device(s): {devices}"
     )
     ass_finder = ModelParts2GPUsAssigner(devices)
-    model_ass = ass_finder(devices)
+    model_ass = ass_finder()
     if not len(model_ass):
         raise Exception(
             "Unable to find a valid assignment of model parts to GPUs! This could be bad luck in sampling!"
@@ -55,8 +55,9 @@ if multi:
         n_procs, devices, model_parallel_assignment=model_ass, **kwargs
     )
 else:
+    # TODO 
     # if MP:
-        # pipe = StableDiffusionModelParallel.from_pretrained(**kwargs).to(model_ass)
+        # pipe = StableDiffusionModelParallel.from_pretrained(**kwargs).to(model_ass[0])
         # safety, safety_extractor = remove_nsfw(pipe)
     # else:
     pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
@@ -82,12 +83,17 @@ def inference(
     nsfw_filter=False,
     noise_scheduler=None,
 ):
-    # for repeatable results
-    generator = (
-        torch.Generator("cuda").manual_seed(seed)
-        if seed is not None and seed > 0
-        else None
-    )
+    # for repeatable results; tensor generated on cpu for model parallel
+    if multi:
+        # generator cant be pickled
+        generator = seed
+    else:
+        generator = (
+            torch.Generator("cuda" if not MP else "cpu").manual_seed(seed)
+            if seed is not None and seed > 0
+            else None
+        )
+
     if nsfw_filter:
         pipe.safety_checker = safety.cuda() if not multi else None
     else:
