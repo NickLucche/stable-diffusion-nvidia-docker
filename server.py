@@ -15,7 +15,7 @@ if __name__ == "__main__":
         if not len(prompt.strip()):
             return [], prompts
         images = inference(prompt, *args)
-        if not len(prompts) or prompt != prompts[-1]:
+        if not len(prompts) or [prompt] != prompts[-1]:
             prompts.append([prompt])
 
         # return [np.random.randn(256, 256, 3).astype(np.uint8)]*8, prompts

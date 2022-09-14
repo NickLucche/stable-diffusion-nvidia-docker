@@ -13,6 +13,7 @@ from utils import ToGPUWrapper, dummy_checker, dummy_extractor, remove_nsfw
 from typing import Any, Dict, List, Optional, Union
 
 ## Data Parallel: each process handles a copy of the model, executed on a different device ##
+## +Model Parallel: model components are (potentially) scattered across different devices, each model handled by a process ##
 def cuda_inference_process(
     worker_id: int,
     devices: List[torch.device],
@@ -82,6 +83,8 @@ def cuda_inference_process(
             if kwargs["generator"] is not None and kwargs["generator"] > 0:
                 seed = kwargs["generator"]
                 kwargs["generator"] = torch.Generator(f"cuda:{device_id}" if mp_ass is None else "cpu").manual_seed(seed)
+            else:
+                kwargs.pop("generator", None)
             with torch.autocast("cuda"):
                 images: List[Image.Image] = model(prompts, **kwargs)["sample"]
         out_q.put(images)
