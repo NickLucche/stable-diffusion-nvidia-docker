@@ -12,8 +12,8 @@ from schedulers import schedulers
 
 
 TOKEN = os.environ.get("TOKEN", None)
-fp16 = bool(os.environ.get("FP16", True))
-MP = bool(os.environ.get("MODEL_PARALLEL", False))
+fp16 = bool(int(os.environ.get("FP16", 1)))
+MP = bool(int(os.environ.get("MODEL_PARALLEL", 0)))
 if TOKEN is None:
     raise Exception(
         "Unable to read huggingface token! Make sure to get your token here https://huggingface.co/settings/tokens and set the corresponding env variable with `docker run --env TOKEN=<YOUR_TOKEN>`"

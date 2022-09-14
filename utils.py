@@ -158,7 +158,7 @@ class ModelParts2GPUsAssigner:
         self.G = np.array(G, dtype=np.uint16)
         # model components memory usage, fixed order: unet_e, unet_d, text_encoder, vae
         # TODO make dynamic using `model_size_Mb(model.text_encoder)`,
-        fp16 = bool(os.environ.get("FP16", True))
+        fp16 = bool(int(os.environ.get("FP16", 1)))
         if fp16:
             self.W = np.array([666, 975, 235, 160])
         else:
