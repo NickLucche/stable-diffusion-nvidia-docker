@@ -41,7 +41,7 @@ def cuda_inference_process(
                 mp_ass
             )
         # disable nsfw filter by default
-        remove_nsfw(model)
+        safety_checker, safety_extr = remove_nsfw(model)
 
         # create nsfw clip filter so we can re-set it if needed
         # TODO perhaps we can skip this if no one cares about nsfw
@@ -67,9 +67,9 @@ def cuda_inference_process(
                 # safety checker needs to be moved to GPU (it can cause crashes)
                 if kwargs == "clip":
                     model.safety_checker = safety_checker.to(f"cuda:{device_id}")
+                    model.feature_extractor = safety_extr
                 else:
-                    safety_checker = safety_checker.to(f"cpu")
-                    model.safety_checker = dummy_checker
+                    remove_nsfw(model)
             elif prompts == "scheduler":
                 scls, skwargs = schedulers[kwargs]
                 model.scheduler = scls(**skwargs)

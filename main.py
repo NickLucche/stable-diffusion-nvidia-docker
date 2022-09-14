@@ -89,18 +89,23 @@ def inference(
         generator = seed
     else:
         generator = (
-            torch.Generator("cuda" if not MP else "cpu").manual_seed(seed)
+            torch.Generator(f"cuda:{devices[0]}" if not MP else "cpu").manual_seed(seed)
             if seed is not None and seed > 0
             else None
         )
 
     if nsfw_filter:
-        pipe.safety_checker = safety.cuda() if not multi else None
+        if multi:
+            pipe.safety_checker = None
+        else:
+            pipe.safety_checker = safety.to(f"cuda:{devices[0]}")
+            pipe.feature_extractor = safety_extractor
     else:
-        # remove safety network from gpu
-        if not multi:
-            safety.cpu()
-        pipe.safety_checker = dummy_checker
+        if multi:
+            pipe.safety_checker = dummy_checker
+        else:
+            # remove safety network from gpu
+            remove_nsfw(pipe)
 
     # set noise scheduler for inference
     if noise_scheduler is not None and noise_scheduler in schedulers:

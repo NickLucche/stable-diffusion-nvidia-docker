@@ -1,3 +1,4 @@
+import os
 from typing import Tuple, List
 import torch
 import torch.nn as nn
@@ -36,8 +37,6 @@ def dummy_extractor(images, return_tensors="pt"):
     data = {"pixel_values": images}
     return BatchFeature(data=data, tensor_type=return_tensors)
 
-    return torch.from_numpy(np.array(images))
-
 
 def remove_nsfw(
     model: StableDiffusionPipeline,
@@ -69,7 +68,7 @@ def get_gpu_setting(env_var: str) -> Tuple[bool, List[int]]:
 
 def get_free_memory_Mb(device: int):
     # returns (free, total) device memory, in bytes
-    return torch.cuda.mem_get_info(device)[0] / 2 ** 20
+    return torch.cuda.mem_get_info(device)[0] / 2**20
 
 
 def model_size_Mb(model):
@@ -80,7 +79,7 @@ def model_size_Mb(model):
     buffer_size = 0
     for buffer in model.buffers():
         buffer_size += buffer.nelement() * buffer.element_size()
-    return (param_size + buffer_size) / 1024 ** 2
+    return (param_size + buffer_size) / 1024**2
 
 
 class ToGPUWrapper(nn.Module, object):
@@ -123,30 +122,60 @@ class ToGPUWrapper(nn.Module, object):
 
 
 class ModelParts2GPUsAssigner:
-    def __init__(self, devices: List[int],) -> None:
+    def __init__(
+        self,
+        devices: List[int],
+    ) -> None:
+        """
+        Finds a valid assignment of model parts (unet, vae..) to available GPUs
+        using a stochastic brute-force approach. The problem is formulated
+        as a Integer Linear Programming one:
+            maximize w^t X with  w=[a, b, c, d]
+            subject to x_1 a + y_1 b + z_1 c + k_1 d \leq v_1
+            \dots
+            x_n a + y_n b + z_n c + k_n d \leq v_n
+            with \sum x_i=\sum y_i=\sum z_i=\sum k_i
+            x, y, z, k \geq 0
+            x, y, z, k \in Z^n
+
+        `self.W` represents the memory requirements of each component in which the model is split
+        into.
+        `self.G` is a vector of size N, containing the available memory of each device. Available
+        memory is conservatively taken as 60% of the free memory.
+        The assignment state I is a Nx4 matrix where I[i,j] represents the number of components j
+        assigned to GPU i (initially 0).  
+        """
         self.N = len(devices)
-        # memory "budget" for each device: we consider 80% of the available GPU memory
+        # memory "budget" for each device: we consider 60% of the available GPU memory
         # so that the rest can be used for storing intermediate results
-        # TODO unet uses way more than the other components, balance that out
+        # TODO unet uses way more than the other components, optmize to do inference on 512x512
         G = [int(get_free_memory_Mb(d) * 0.6) for d in devices]
-        print("Free GPU memory", G)
+        print("Free GPU memory (per device): ", G)
         # FIXME G is kind of a function of n_models itself, as the more models you have
         # the more memory you will be using for storing intermediate results...
         self.G = np.array(G, dtype=np.uint16)
         # model components memory usage, fixed order: unet_e, unet_d, text_encoder, vae
         # TODO make dynamic using `model_size_Mb(model.text_encoder)`,
-        # BUG this wont work for fp32, sizes are bigger
-        self.W = np.array([666, 975, 235, 160])
+        fp16 = bool(os.environ.get("FP16", True))
+        if fp16:
+            self.W = np.array([666, 975, 235, 160])
+        else:
+            # fp32 weights
+            self.W = np.array([1331, 1949, 470, 320])
 
-        # max number of models you can have considering pooled VRam as it if was a single GPU,
-        # "upper bounded" by max number of processes
-        # TODO should we make it easier to allow single model multiple gpus?
-        self._max_models = min(
-            multiprocessing.cpu_count(), np.floor(self.G.sum() / self.W.sum())
-        )
-        if self._max_models == 0:
+        single_model = bool(os.environ.get("SINGLE_MODEL_PARALLEL", False))
+        # easy way to ensure single model multiple gpus, useful for debugging
+        if single_model:
+            self._max_models = 1
+        else:
+            # max number of models you can have considering pooled VRam as it if was a single GPU,
+            # "upper bounded" by max number of processes
+            self._max_models = min(
+                multiprocessing.cpu_count(), np.floor(self.G.sum() / self.W.sum())
+            )
+        if np.floor(self.G.sum() / self.W.sum()) == 0:
             raise Exception(
-                "You don't have enough combined VRam to host a single model!"
+                "You don't have enough combined VRam to host a single model! Try to run the container using the FP16 mode."
             )
 
     def state_evaluation(self, state: np.ndarray):
@@ -157,8 +186,22 @@ class ModelParts2GPUsAssigner:
         """
         return (state @ self.W <= self.G).all()
 
-    def add_model(self, state: np.ndarray, rnd=True, sample_size=2):
-        # TODO proper docs
+    def add_model(self, state: np.ndarray, rnd=True, sample_size=2)->List[np.ndarray]:
+        """
+        This function takes an assignment state and tries to add a "model" to it:
+        adding a model means assigning *each of the 4 components* to a device.
+        It does so by brute-force searching for valid assignments that support
+        the addition of another model. 
+        If no such assignment exist, an empty list is returned.
+        can be
+        changed through `sample_size`
+        Args:
+            state (np.ndarray): The initial state from which the search starts from.
+            rnd (bool, optional): Whether to generate new assignments in a random fashion, 
+            rather than proceeding "linearly". Defaults to True.
+            sample_size (int, optional): The number of valid assignments needed to
+            interrupt the search before the whole space is visited. Defaults to 2.
+        """
         def get_device_permutation():
             if rnd:
                 return np.random.permutation(self.N)
@@ -194,7 +237,10 @@ class ModelParts2GPUsAssigner:
     def find_best_assignment(
         self, state: np.ndarray, curr_n_models: int, **kwargs
     ) -> Tuple[int, List[np.ndarray]]:
-        # try to increase the number of models until you can have no more, recursively
+        """ 
+            Starting from the intial empty assignment, tries to add a model to the multi-gpu
+            setup recursively, stopping whenever this is impossible.  
+        """
         if curr_n_models >= self._max_models:
             return -1, []
         prev = state.copy()
