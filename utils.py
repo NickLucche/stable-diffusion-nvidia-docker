@@ -42,10 +42,12 @@ def remove_nsfw(
     model: StableDiffusionPipeline,
 ) -> Tuple[StableDiffusionSafetyChecker, CLIPFeatureExtractor]:
     nsfw_model: StableDiffusionSafetyChecker = model.safety_checker
+    if isinstance(nsfw_model, StableDiffusionSafetyChecker):
+        nsfw_model = nsfw_model.cpu()
     model.safety_checker = dummy_checker
     extr = model.feature_extractor
     model.feature_extractor = dummy_extractor
-    return nsfw_model.cpu(), extr
+    return nsfw_model, extr
 
 
 def get_gpu_setting(env_var: str) -> Tuple[bool, List[int]]:
