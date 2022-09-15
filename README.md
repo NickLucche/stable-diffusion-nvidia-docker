@@ -69,21 +69,43 @@ Note that if your system has highly imbalanced GPU memory distribution (e.g. gpu
 
 # Samples
 
-The internet is full of these, but I felt I couldn't put up this repo without sharing a few of "my own".. 
+The internet is full of these, but I felt I couldn't let this repo go without sharing a few of "my own".. 
 
-![](assets/0.png)
-![](assets/1.png)
-![](assets/2.png)
-![](assets/3.png)
-![](assets/4.png)
-![](assets/5.png)
-![](assets/6.png)
-![](assets/7.png)
+<p align="center" width="100%">
+    <img width="48%" src="assets/0.png">
+    <img width="48%" src="assets/1.png">
+</p>
+
+Fixed seed, slightly change text input (thanks to @mronchetti for the cool  prompt):
+<p align="center" width="100%">
+    <img width="32%" src="assets/redlove.png">
+    <img width="32%" src="assets/greenlove.png">
+    <img width="32%" src="assets/bluelove.png">
+</p>
+
+Fixed seed, same input, increase `guidance_scale` (more "adherent" to text) with a step of 5:
+<p align="center" width="100%">
+    <img width="32%" src="assets/village_5_2.png">
+    <img width="32%" src="assets/village_10_2.png">
+    <img width="32%" src="assets/village_15_2.png">
+</p>
+<p align="center" width="100%">
+    <img width="48%" src="assets/village_0.png">
+    <img width="48%" src="assets/village_5.png">
+</p>
+
+'Picture' vs 'Drawing' text input:
+<p align="center" width="100%">
+    <img width="48%" src="assets/3.png">
+    <img width="48%" src="assets/4.png">
+</p>
+
 
 ## TODO
  - [ ] allow other input modalities (images)
  - [x] move model to specifiec GPU number (env variable)
  - [x] multi-gpu support (data parallel)
  - [x] multi-gpu support (PipelineParallel/model parallel)
+ - [ ] Data+Model parallel: optimize memory assignment for 512x512 inference
  - [ ] dump and clear prompt history
  - [ ] test on older cudnn

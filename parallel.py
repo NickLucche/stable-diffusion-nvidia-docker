@@ -38,6 +38,7 @@ def cuda_inference_process(
         else:
             mp_ass = mp_ass[worker_id]
             print("Model parallel worker component assignment:", mp_ass)
+            print(f"Creating and moving model parts to respective devices..")
             model = StableDiffusionModelParallel.from_pretrained(**model_kwargs).to(
                 mp_ass
             )
