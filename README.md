@@ -3,6 +3,7 @@ A friend of mine working in art/design wanted to try out [Stable Diffusion](http
 I also took the liberty of throwing in a simple web UI (made with gradio) to wrap the model. Perhaps we can evolve it a bit to offer a few more functionalities (see TODO).
 
 **UPDATE:** we now support inference on multiple GPUs with a "Data Parallel" approach.
+
 **UPDATE 2:** we now support inference on multiple GPUs with a "Model Parallel" approach (see `Multi-GPU` section).
 
 # Requirements
