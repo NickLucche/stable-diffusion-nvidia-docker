@@ -82,7 +82,7 @@ def inference(
     seed=None,
     nsfw_filter=False,
     noise_scheduler=None,
-):
+)->List[Image.Image]:
     # for repeatable results; tensor generated on cpu for model parallel
     if multi:
         # generator cant be pickled

@@ -1,5 +1,4 @@
 import gradio as gr
-import numpy as np
 import torch.multiprocessing as mp
 from schedulers import schedulers_names
 

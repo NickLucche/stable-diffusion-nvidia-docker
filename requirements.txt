@@ -3,3 +3,4 @@ diffusers==0.2.4
 transformers==4.21.1
 scipy==1.7.0
 ftfy==6.1.1
+Flask>=2.2.2
