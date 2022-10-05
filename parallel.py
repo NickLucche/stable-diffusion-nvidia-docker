@@ -2,6 +2,7 @@ import numpy as np
 from PIL import Image
 import torch
 import torch.multiprocessing as mp
+import torch.nn as nn
 from transformers import CLIPConfig
 from schedulers import schedulers
 import pickle
@@ -51,7 +52,8 @@ def cuda_inference_process(
             CLIPConfig(**model_kwargs.pop("clip_config"))
         )
         out_q.put(True)
-    except:
+    except Exception as e:
+        print(e)
         out_q.put(False)
         return
     # inference loop
@@ -250,12 +252,20 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
             "mid_block",
         ]:
             module = getattr(self.unet, layer)
-            setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[0]))
+            if type(module) is nn.ModuleList:
+                mlist = nn.ModuleList([ToGPUWrapper(mod, part_to_device[0]) for mod in module])
+                setattr(self.unet, layer, mlist)
+            else:
+                setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[0]))
 
         # move decoder
         for layer in ["up_blocks", "conv_norm_out", "conv_act", "conv_out"]:
             module = getattr(self.unet, layer)
-            setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[1]))
+            if type(module) is nn.ModuleList:
+                mlist = nn.ModuleList([ToGPUWrapper(mod, part_to_device[1]) for mod in module])
+                setattr(self.unet, layer, mlist)
+            else:
+                setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[1]))
 
         # need to wrap scheduler.step to move sampled noise to unet gpu
         self._wrap_scheduler_step()
