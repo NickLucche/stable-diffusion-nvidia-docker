@@ -83,22 +83,25 @@ def inference(
     low_vram=False,
     noise_scheduler=None,
     input_image=None,
+    inv_strenght=0.0
 ):
+    prompt = [prompt] * num_images
     input_kwargs = dict(
         prompt=prompt,
         num_inference_steps=num_inference_steps,
         height=height,
         width=width,
         guidance_scale=guidance_scale,
-        generator=generator,
+        generator=None,
     )
     # Img2Img: to avoid re-loading the model, we ""cast"" the pipeline
     if input_image is not None:
         # np.count_nonzero(input_image["mask"].convert("1"))
-        input_image = {k: v.resize((width, height)) for k, v in input_image}
+        input_image = {k: v.resize((width, height)) for k, v in input_image.items()}
         pipe.__class__ = StableDiffusionImg2ImgPipeline
         # TODO negative prompt?strength?output type?
         input_kwargs["init_image"] = input_image["image"]
+        input_kwargs["strength"] = 1.0-inv_strenght
     else:
         pipe.__class__ = StableDiffusionPipeline
 
@@ -106,14 +109,10 @@ def inference(
     if multi:
         # generator cant be pickled
         # NOTE fixed seed with multiples gpus should be different for each one but fixed!
-        generator = seed
-    else:
-        generator = (
-            torch.Generator(f"cuda:{devices[0]}" if not MP else "cpu").manual_seed(seed)
-            if seed is not None and seed > 0
-            else None
-        )
-
+        input_kwargs["generator"] = seed
+    elif seed is not None and seed > 0:
+        input_kwargs["generator"] = torch.Generator(f"cuda:{devices[0]}" if not MP else "cpu").manual_seed(seed)
+        
     if nsfw_filter:
         if multi:
             pipe.safety_checker = None
@@ -144,7 +143,6 @@ def inference(
             )
             pipe.scheduler = s
 
-    prompt = [prompt] * num_images
     # number of denoising steps run during inference (the higher the better)
     with torch.autocast("cuda"):
         images: List[Image.Image] = pipe(**input_kwargs)["images"]

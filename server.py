@@ -19,6 +19,7 @@ if __name__ == "__main__":
             prompts.append([prompt])
 
         return images, prompts
+
     # default model does not have nsfw safety checker
     enable_nsfw_toggle=not model_parallel and MODEL_ID!="stabilityai/stable-diffusion-2-base"
     demo = gr.Interface(
@@ -36,7 +37,9 @@ if __name__ == "__main__":
             gr.Checkbox(False, label="NSFW Filter", interactive=enable_nsfw_toggle),
             gr.Checkbox(False, label="Low VRAM mode"),
             gr.Dropdown(schedulers_names, value="PNDM", label="Noise Scheduler"),
-            gr.Image(type="pil", tool='sketch', label="Input Image")
+            gr.Image(type="pil", tool='sketch', label="Input Image"),
+            gr.Slider(0, 1, 0.25, step=0.05, label="Img2Img input fidelity"),
+            # gr.Image(type="pil", source='canvas',tool='sketch-color', label="Sketch2Img")
         ],
         # TODO set prompts as default value 
         outputs=[gr.Gallery(show_label=False).style(grid=2, container=True), gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True).style(rounded=True)],
