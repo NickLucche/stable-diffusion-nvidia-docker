@@ -35,7 +35,8 @@ if __name__ == "__main__":
             # disable nsfw filter in mp mode
             gr.Checkbox(False, label="NSFW Filter", interactive=enable_nsfw_toggle),
             gr.Checkbox(False, label="Low VRAM mode"),
-            gr.Dropdown(schedulers_names, value="PNDM", label="Noise Scheduler")
+            gr.Dropdown(schedulers_names, value="PNDM", label="Noise Scheduler"),
+            gr.Image(type="pil", tool='sketch', label="Input Image")
         ],
         # TODO set prompts as default value 
         outputs=[gr.Gallery(show_label=False).style(grid=2, container=True), gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True).style(rounded=True)],
