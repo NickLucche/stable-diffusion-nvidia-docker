@@ -32,6 +32,7 @@ if __name__ == "__main__":
                     inputs = []
                     with gr.TabItem("Text2Img"):
                         with gr.Column():
+                            # FIXME crashes with weird error if no input
                             inputs.append(gr.Textbox(placeholder="Place your input prompt here and start dreaming!", label="Input Prompt")),
                             inputs.append(gr.Slider(1, max(24, len(devices)*2), 1, step=1, label="Number of Images")),
                             inputs.append(gr.Slider(1, 200, 50, step=1, label="Steps")),
@@ -45,13 +46,18 @@ if __name__ == "__main__":
                             inputs.append(gr.Dropdown(schedulers_names, value="PNDM", label="Noise Scheduler")),
                     with gr.TabItem("Img2Img"):
                         with gr.Column():
-                            inputs.append(gr.Image(type="pil", tool='sketch', label="Input Image")),
                             inputs.append(gr.Slider(0, 1, 0.25, step=0.05, label="Img2Img input fidelity")),
+                            inputs.append(gr.Image(type="pil", tool=None, label="Image Conditioning")),
+                            inputs.append(gr.Image(type="pil", tool='sketch-color', label="Sketch2Img"))
+                    with gr.TabItem("Image Inpainting"):
+                        with gr.Column():
+                            # gr.Markdown("NOTE: Using image inpainting requires re-loading a different model from disk!")
+                            inputs.append(gr.Image(type="pil", tool='sketch', label="Image Conditioning or Inpaint")),
                 with gr.Row():
                     clear_btn = gr.Button("Clear", variant="secondary")
                     button = gr.Button("Generate Image!", variant="primary")
-            with gr.Column():
-                outputs=[gr.Gallery(show_label=False).style(grid=2, container=True), gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True).style(rounded=True)]           
+            with gr.Column(variant="box"):
+                outputs=[gr.Gallery(show_label=False).style(grid=2, container=True), gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True)]           
         # sample prompt from https://strikingloo.github.io/DALL-E-2-prompt-guide
         # NOTE prompt MUST be first input, since it is passed here
         gr.Examples(["A digital illustration of a medieval town, 4k, detailed, trending in artstation, fantasy"], inputs=inputs[:1])

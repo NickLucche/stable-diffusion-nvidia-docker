@@ -1,6 +1,9 @@
 from typing import List
 from diffusers import StableDiffusionPipeline
-from diffusers.pipelines.stable_diffusion import StableDiffusionImg2ImgPipeline
+from diffusers.pipelines.stable_diffusion import (
+    StableDiffusionImg2ImgPipeline,
+    StableDiffusionInpaintPipeline,
+)
 import torch
 from PIL import Image
 from diffusers.pipelines.stable_diffusion.safety_checker import (
@@ -23,8 +26,9 @@ if TOKEN is None:
     raise Exception(
         "Unable to read huggingface token! Make sure to get your token here https://huggingface.co/settings/tokens and set the corresponding env variable with `docker run --env TOKEN=<YOUR_TOKEN>`"
     )
+MIN_INPAINT_MASK_PERCENT = 0.1
 
-print("Loading model..")
+print(f"Loading model {MODEL_ID}..")
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 
 # create and move model to GPU(s), defaults to GPU 0
@@ -82,8 +86,10 @@ def inference(
     nsfw_filter=False,
     low_vram=False,
     noise_scheduler=None,
+    inv_strenght=0.0,
     input_image=None,
-    inv_strenght=0.0
+    input_sketch=None,
+    masked_image=None
 ):
     prompt = [prompt] * num_images
     input_kwargs = dict(
@@ -94,14 +100,40 @@ def inference(
         guidance_scale=guidance_scale,
         generator=None,
     )
+    # input sketch has priority over input image
+    if input_sketch is not None:
+        input_image = input_sketch
     # Img2Img: to avoid re-loading the model, we ""cast"" the pipeline
     if input_image is not None:
-        # np.count_nonzero(input_image["mask"].convert("1"))
-        input_image = {k: v.resize((width, height)) for k, v in input_image.items()}
-        pipe.__class__ = StableDiffusionImg2ImgPipeline
-        # TODO negative prompt?strength?output type?
-        input_kwargs["init_image"] = input_image["image"]
-        input_kwargs["strength"] = 1.0-inv_strenght
+        # TODO load inpainting model
+        input_image = input_image.resize((width, height)) 
+        # image guided generation
+        if multi:
+            pipe.change_pipeline_type("img2img")
+        else:
+            pipe.__class__ = StableDiffusionImg2ImgPipeline
+        # TODO negative prompt?
+        input_kwargs["init_image"] = input_image
+        input_kwargs["strength"] = 1.0 - inv_strenght
+    elif masked_image is not None:
+        # resize to specified shape
+        masked_image = {
+            k: v.convert("RGB").resize((width, height)) for k, v in masked_image.items()
+        }
+
+        # to do image inpainting, we must provide a big enough mask
+        if np.count_nonzero(masked_image["mask"].convert("1")) > (
+            width * height * MIN_INPAINT_MASK_PERCENT
+        ):
+            raise Exception("ERROR: mask is too small!")
+        pipe.__class__ = StableDiffusionInpaintPipeline
+        # TODO extra fields? does this weak copy work here??
+        # input_kwargs["prompt"] = "portrait of a man selling paintings with passion"
+        input_kwargs["image"] = masked_image["image"]
+        input_kwargs["mask_image"] = masked_image["mask"] 
+    elif multi:
+        # default mode
+        pipe.change_pipeline_type("text")
     else:
         pipe.__class__ = StableDiffusionPipeline
 
@@ -111,8 +143,10 @@ def inference(
         # NOTE fixed seed with multiples gpus should be different for each one but fixed!
         input_kwargs["generator"] = seed
     elif seed is not None and seed > 0:
-        input_kwargs["generator"] = torch.Generator(f"cuda:{devices[0]}" if not MP else "cpu").manual_seed(seed)
-        
+        input_kwargs["generator"] = torch.Generator(
+            f"cuda:{devices[0]}" if not MP else "cpu"
+        ).manual_seed(seed)
+
     if nsfw_filter:
         if multi:
             pipe.safety_checker = None

@@ -9,7 +9,7 @@ import pickle
 from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
-from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
+from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline,StableDiffusionInpaintPipeline
 from utils import ToGPUWrapper, dummy_checker, dummy_extractor, remove_nsfw
 from typing import Any, Dict, List, Optional, Union
 import random
@@ -28,8 +28,8 @@ def cuda_inference_process(
     into an output queue.
     """
     mp_ass: Dict[int, int] = model_kwargs.pop("model_parallel_assignment", None)
-    # each worker gets a different starting seed so they can be fixed and yet produce different results 
-    worker_seed = random.randint(0, int(2**32-1))
+    # each worker gets a different starting seed so they can be fixed and yet produce different results
+    worker_seed = random.randint(0, int(2**32 - 1))
     try:
         if mp_ass is None:
             device_id = devices[worker_id]
@@ -82,6 +82,13 @@ def cuda_inference_process(
                 model.scheduler = s
             elif prompts == "low_vram":
                 model.enable_attention_slicing(kwargs)
+            elif prompts == "pipeline_type":
+                if kwargs == "text":
+                    model.__class__ = StableDiffusionPipeline
+                elif kwargs == "img2img":
+                    model.__class__ = StableDiffusionImg2ImgPipeline
+                elif kwargs == "inpaint":
+                    model.__class__ = StableDiffusionInpaintPipeline
             continue
         if not len(prompts):
             images = []
@@ -90,7 +97,9 @@ def cuda_inference_process(
             # print("Inference", prompts, kwargs, model.device)
             if kwargs["generator"] is not None and kwargs["generator"] > 0:
                 seed = kwargs["generator"] + worker_seed
-                kwargs["generator"] = torch.Generator(f"cuda:{device_id}" if mp_ass is None else "cpu").manual_seed(seed)
+                kwargs["generator"] = torch.Generator(
+                    f"cuda:{device_id}" if mp_ass is None else "cpu"
+                ).manual_seed(seed)
             else:
                 kwargs.pop("generator", None)
             with torch.autocast("cuda"):
@@ -105,6 +114,7 @@ class StableDiffusionMultiProcessing(object):
         self.n = n_procs
         self._safety_checker = "dummy"
         self._scheduler = "PNDM"
+        self._pipeline_type = "text"
 
     def _send_cmd(self, k1, k2, wait_ack=True):
         # send a cmd to all processes (put item in queue)
@@ -116,6 +126,9 @@ class StableDiffusionMultiProcessing(object):
             for _ in range(self.n):
                 res.append(self.outq.get())
         return res
+    
+    def _send_cmd_to_all(self, k1, k2, wait_ack=True):
+        return self._send_cmd([k1] * self.n, [k2] * self.n, wait_ack=wait_ack)
 
     def __call__(self, prompts, **kwargs):
         # run inference on different processes, each handles a model on a different GPU (split load evenly)
@@ -199,12 +212,19 @@ class StableDiffusionMultiProcessing(object):
             return
         self._scheduler = value
         self._send_cmd(["scheduler"] * self.n, [value] * self.n, wait_ack=False)
-    
+
     def enable_attention_slicing(self):
         self._send_cmd(["low_vram"] * self.n, ["auto"] * self.n, wait_ack=False)
 
     def disable_attention_slicing(self):
         self._send_cmd(["low_vram"] * self.n, [None] * self.n, wait_ack=False)
+
+    def change_pipeline_type(self, new_type: str):
+        assert new_type in ["text", "img2img", "inpaint"]
+        if new_type == self._pipeline_type:
+            return
+        self._pipeline_type = new_type
+        self._send_cmd_to_all("pipeline_type", new_type, wait_ack=False)
 
 
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
@@ -264,7 +284,9 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
         ]:
             module = getattr(self.unet, layer)
             if type(module) is nn.ModuleList:
-                mlist = nn.ModuleList([ToGPUWrapper(mod, part_to_device[0]) for mod in module])
+                mlist = nn.ModuleList(
+                    [ToGPUWrapper(mod, part_to_device[0]) for mod in module]
+                )
                 setattr(self.unet, layer, mlist)
             else:
                 setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[0]))
@@ -273,7 +295,9 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
         for layer in ["up_blocks", "conv_norm_out", "conv_act", "conv_out"]:
             module = getattr(self.unet, layer)
             if type(module) is nn.ModuleList:
-                mlist = nn.ModuleList([ToGPUWrapper(mod, part_to_device[1]) for mod in module])
+                mlist = nn.ModuleList(
+                    [ToGPUWrapper(mod, part_to_device[1]) for mod in module]
+                )
                 setattr(self.unet, layer, mlist)
             else:
                 setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[1]))
