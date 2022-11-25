@@ -6,6 +6,8 @@ I also took the liberty of throwing in a simple web UI (made with gradio) to wra
 
 ~~**UPDATE 2:** we now support inference on multiple GPUs with a "Model Parallel" approach (see `Multi-GPU` section).~~
 
+**UPDATE 3 but really it's a 2:** [Stable Diffusion 2.0](https://stability.ai/blog/stable-diffusion-v2-release) is out generating images more beautiful than ever! This is now the default model being loaded and it supports all previous features and more, give it a try!
+
 # Requirements
  - OS: Ubuntu (tested on 20.04) or Windows (tested on Windows 10 21H2)
  - Nvidia GPU with at least 6GB vRAM (gtx 700 onward, please refer [here](https://docs.nvidia.com/deeplearning/cudnn/support-matrix/index.html)). Mind that the bigger the image size (or the number of images) you want to dream, the more memory you're gonna need. For reference, dreaming a 256x256 image should take up ~5gb, while a 512x512 around 7gb. 
@@ -33,7 +35,7 @@ Once the init phase is finished a message will pop-up in your terminal (`docker 
 
 ![](assets/screen.png)
 
-By default, the half-precision/fp16 model is loaded. This is the recommended approach if you're planning to run the model on a GPU with < 10GB of memory. To disable FP16 and run inference using single-precision set the environment variable FP16=0 as a docker run option, like so:
+By default, the half-precision/fp16 model is loaded. This is the recommended approach if you're planning to run the model on a GPU with < 10GB of memory (takes half the space, ~half the time and yields similar output). To disable FP16 and run inference using single-precision (FP32), set the environment variable FP16=0 as a docker run option, like so:
 
 `docker run .. -e FP16=0 ...`  
 
@@ -54,7 +56,7 @@ Each device/model generates a full image, so make sure you increase the `Number 
 
 I should also mention that adding the nsfw filter (by checking corresponding box) includes moving an additional model to GPU, so it can cause out of memory issues.
 
-### ~~Model Parallel~~ -Currently disabled! Use Data Parallel for true parallelism-
+### ~~Model Parallel~~ -Currently disabled! Use "Data Parallel" for true parallelism!-
 
 It works by splitting the model into a fixed number of parts, assigning each part to a device and then handling data transfer from one device to the other (more technical details [here](https://github.com/NickLucche/stable-diffusion-nvidia-docker/issues/8) or from source).
 This was originally intended to support setups that had GPUs with small amounts of VRAM that could only run the model by combining their resources, but now it also supports splitting multiple models to accomodate for bigger GPUs, effectively combining Model and Data Parallel.
@@ -66,6 +68,17 @@ You can try out this option with:
 
 Note that if your system has highly imbalanced GPU memory distribution (e.g. gpu0->6Gb, gpu1->24Gb.. ) the smallest device might bottleneck the inference process; the easiest way to fix that, is to ignore the smallest device by *not* specifying it in the `DEVICES` list (e.g. `-e DEVICES=1,2..`).
 
+## About model versions
+
+By default, the model loaded is [stabilityai/stable-diffusion-2-base](https://huggingface.co/stabilityai/stable-diffusion-2-base). Many other checkpoints have been created that are compatible with [diffusers](https://github.com/huggingface/diffusers) (awesome library, ckeck it out) and you can provide them as an additional environment variable like so:
+
+`-e MODEL_ID runwayml/stable-diffusion-v1-5`
+
+Model weights are downloaded to and loaded from `/root/.cache/huggingface/diffusers`, so if you want to share your model across multiple containers runs, you can provide this path as a [docker volume](https://docs.docker.com/storage/volumes/):
+
+`-v /path/to/your/hugginface/cache:/root/.cache/huggingface/diffusers`
+
+Mind that the host path (first path up to ":") might very well be the same as the second if you're using the same diffusers library on the host and you didn't modify `HF_HOME`.
 
 **P.S:** Feel free to open an issue for any problem you may face during installation.
 
@@ -105,6 +118,7 @@ Fixed seed, same input, increase `guidance_scale` (more "adherent" to text) with
 
 ## TODO
  - [ ] allow other input modalities (images)
+ - [ ] support extra v2 features (depth-based generation, upscaling) 
  - [x] move model to specifiec GPU number (env variable)
  - [x] multi-gpu support (data parallel)
  - [x] multi-gpu support (PipelineParallel/model parallel)
