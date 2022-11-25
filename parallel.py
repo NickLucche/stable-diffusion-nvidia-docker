@@ -75,8 +75,10 @@ def cuda_inference_process(
                 else:
                     remove_nsfw(model)
             elif prompts == "scheduler":
-                scls, skwargs = schedulers[kwargs]
-                model.scheduler = scls(**skwargs)
+                s = getattr(schedulers[kwargs], "from_config")(model.scheduler.config)
+                model.scheduler = s
+            elif prompts == "low_vram":
+                model.enable_attention_slicing(kwargs)
             continue
         if not len(prompts):
             images = []
@@ -89,7 +91,7 @@ def cuda_inference_process(
             else:
                 kwargs.pop("generator", None)
             with torch.autocast("cuda"):
-                images: List[Image.Image] = model(prompts, **kwargs)["sample"]
+                images: List[Image.Image] = model(prompts, **kwargs).images
         out_q.put(images)
 
 
@@ -120,7 +122,7 @@ class StableDiffusionMultiProcessing(object):
         # request inference and block for result
         res = self._send_cmd(prompts, [kwargs] * self.n)
         # mimic interface
-        return {"sample": [img for images in res for img in images]}
+        return {"images": [img for images in res for img in images]}
 
     @classmethod
     def from_pretrained(
@@ -194,6 +196,12 @@ class StableDiffusionMultiProcessing(object):
             return
         self._scheduler = value
         self._send_cmd(["scheduler"] * self.n, [value] * self.n, wait_ack=False)
+    
+    def enable_attention_slicing(self):
+        self._send_cmd(["low_vram"] * self.n, ["auto"] * self.n, wait_ack=False)
+
+    def disable_attention_slicing(self):
+        self._send_cmd(["low_vram"] * self.n, [None] * self.n, wait_ack=False)
 
 
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer

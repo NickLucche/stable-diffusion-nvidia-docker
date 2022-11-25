@@ -4,7 +4,7 @@ I also took the liberty of throwing in a simple web UI (made with gradio) to wra
 
 **UPDATE:** we now support inference on multiple GPUs with a "Data Parallel" approach.
 
-**UPDATE 2:** we now support inference on multiple GPUs with a "Model Parallel" approach (see `Multi-GPU` section).
+~~**UPDATE 2:** we now support inference on multiple GPUs with a "Model Parallel" approach (see `Multi-GPU` section).~~
 
 # Requirements
  - OS: Ubuntu (tested on 20.04) or Windows (tested on Windows 10 21H2)
@@ -54,12 +54,12 @@ Each device/model generates a full image, so make sure you increase the `Number 
 
 I should also mention that adding the nsfw filter (by checking corresponding box) includes moving an additional model to GPU, so it can cause out of memory issues.
 
-### Model Parallel
+### ~~Model Parallel~~ -Currently disabled! Use Data Parallel for true parallelism-
 
 It works by splitting the model into a fixed number of parts, assigning each part to a device and then handling data transfer from one device to the other (more technical details [here](https://github.com/NickLucche/stable-diffusion-nvidia-docker/issues/8) or from source).
-This was originally intended to support setups that had GPUs with small amounts of VRAM that could only run the model by combining their resources, but now it also supports splitting multiple models to accomodate for bigger GPUs, effectively combining Model and Data Parallel. 
+This was originally intended to support setups that had GPUs with small amounts of VRAM that could only run the model by combining their resources, but now it also supports splitting multiple models to accomodate for bigger GPUs, effectively combining Model and Data Parallel.
 
-Single image inference speed may be slower in this modality (since we may need to move data from one device to the other), but it allows to fill your memory more efficiently if you have big GPUs by creating multiple models.
+Single image inference will be slower in this modality (since we may need to move data from one device to the other), but it allows to fill your memory more efficiently if you have big GPUs by creating multiple models.
 You can try out this option with:
 
 `-e MODEL_PARALLEL=1` 
