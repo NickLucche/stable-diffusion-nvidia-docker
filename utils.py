@@ -115,7 +115,12 @@ class ToGPUWrapper(nn.Module, object):
     # return getattr(self.layer, name)
 
     def __iter__(self):
-        return iter(self.layer)
+        # return iter(self.layer)
+        for l in iter(self.layer):
+            yield ToGPUWrapper(l, self.device)
+    @property
+    def in_channels(self):
+        return self.layer.in_channels
 
     def __next__(self):
         return next(self.layer)

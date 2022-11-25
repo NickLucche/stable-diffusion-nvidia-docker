@@ -262,6 +262,9 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
         for layer in ["up_blocks", "conv_norm_out", "conv_act", "conv_out"]:
             module = getattr(self.unet, layer)
             if type(module) is nn.ModuleList:
+                # modifying modulelist causes tensor shapes issues, no idea why..  
+                # for i in range(len(module)):
+                    # module[i] = ToGPUWrapper(module[i], part_to_device[1])
                 mlist = nn.ModuleList([ToGPUWrapper(mod, part_to_device[1]) for mod in module])
                 setattr(self.unet, layer, mlist)
             else:
@@ -281,6 +284,7 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
         prev_foo = self._scheduler.step
 
         def wrapper(x, i, sample: torch.Tensor, *args, **kwargs):
+            # `self.unet.up_blocks` is a ToGPUWrapper instance
             sample = sample.to(self.unet.up_blocks.device)
             return prev_foo(x, i, sample, *args, **kwargs)
 
