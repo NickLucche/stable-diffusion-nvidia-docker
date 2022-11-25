@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Union
 from diffusers import StableDiffusionPipeline
 from diffusers.pipelines.stable_diffusion import (
     StableDiffusionImg2ImgPipeline,
@@ -28,7 +28,6 @@ if TOKEN is None:
     )
 MIN_INPAINT_MASK_PERCENT = 0.1
 
-print(f"Loading model {MODEL_ID}..")
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 
 # create and move model to GPU(s), defaults to GPU 0
@@ -42,37 +41,48 @@ kwargs = dict(
     requires_safety_checker=False,
 )
 
-model_ass = None
-# single-gpu multiple models currently disabled
-if MP and len(devices) > 1:
-    # setup for model parallel: find model parts->gpus assignment
-    print(
-        f"Looking for a valid assignment in which to split model parts to device(s): {devices}"
-    )
-    ass_finder = ModelParts2GPUsAssigner(devices)
-    model_ass = ass_finder()
-    if not len(model_ass):
-        raise Exception(
-            "Unable to find a valid assignment of model parts to GPUs! This could be bad luck in sampling!"
+pipe, safety, safety_extractor = None, None, None
+
+def load_pipeline(model_or_path, devices: List[int]):
+    global pipe, safety, safety_extractor
+    if pipe is not None and pipe._pipe_name == model_or_path:
+        # avoid re-loading same model
+        return
+
+    model_ass = None
+    print(f"Loading {model_or_path} from disk..")
+    # single-gpu multiple models currently disabled
+    if MP and len(devices) > 1:
+        # setup for model parallel: find model parts->gpus assignment
+        print(
+            f"Looking for a valid assignment in which to split model parts to device(s): {devices}"
         )
-    print("Assignments:", model_ass)
+        ass_finder = ModelParts2GPUsAssigner(devices)
+        model_ass = ass_finder()
+        if not len(model_ass):
+            raise Exception(
+                "Unable to find a valid assignment of model parts to GPUs! This could be bad luck in sampling!"
+            )
+        print("Assignments:", model_ass)
 
-if multi:
-    # DataParallel: one process *per GPU* (each has a copy of the model)
-    # ModelParallel: one process *per model*, each model (possibly) on multiple GPUs
-    n_procs = len(devices) if not MP else len(model_ass)
-    pipe = StableDiffusionMultiProcessing.from_pretrained(
-        n_procs, devices, model_parallel_assignment=model_ass, **kwargs
-    )
-else:
-    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(**kwargs)
-    # remove safety checker so it doesn't use up GPU memory
-    safety, safety_extractor = remove_nsfw(pipe)
-    if len(devices):
-        pipe.to(f"cuda:{devices[0]}")
+    if multi:
+        # DataParallel: one process *per GPU* (each has a copy of the model)
+        # ModelParallel: one process *per model*, each model (possibly) on multiple GPUs
+        n_procs = len(devices) if not MP else len(model_ass)
+        pipe = StableDiffusionMultiProcessing.from_pretrained(
+            n_procs, devices, model_parallel_assignment=model_ass, **kwargs
+        )
+    else:
+        pipe = StableDiffusionPipeline.from_pretrained(**kwargs)
+        # remove safety checker so it doesn't use up GPU memory
+        safety, safety_extractor = remove_nsfw(pipe)
+        if len(devices):
+            pipe.to(f"cuda:{devices[0]}")
+    
+    pipe._pipe_name = model_or_path
+    print("Model Loaded!")
 
-
-print("Ready!")
+load_pipeline(MODEL_ID, devices)
 
 
 def inference(
@@ -103,9 +113,9 @@ def inference(
     # input sketch has priority over input image
     if input_sketch is not None:
         input_image = input_sketch
+
     # Img2Img: to avoid re-loading the model, we ""cast"" the pipeline
     if input_image is not None:
-        # TODO load inpainting model
         input_image = input_image.resize((width, height)) 
         # image guided generation
         if multi:
@@ -116,17 +126,21 @@ def inference(
         input_kwargs["init_image"] = input_image
         input_kwargs["strength"] = 1.0 - inv_strenght
     elif masked_image is not None:
+        # TODO load inpainting model
         # resize to specified shape
         masked_image = {
             k: v.convert("RGB").resize((width, height)) for k, v in masked_image.items()
         }
 
         # to do image inpainting, we must provide a big enough mask
-        if np.count_nonzero(masked_image["mask"].convert("1")) > (
+        if np.count_nonzero(masked_image["mask"].convert("1")) < (
             width * height * MIN_INPAINT_MASK_PERCENT
         ):
             raise Exception("ERROR: mask is too small!")
-        pipe.__class__ = StableDiffusionInpaintPipeline
+        if multi:
+            pipe.change_pipeline_type("inpaint")
+        else:
+            pipe.__class__ = StableDiffusionInpaintPipeline
         # TODO extra fields? does this weak copy work here??
         # input_kwargs["prompt"] = "portrait of a man selling paintings with passion"
         input_kwargs["image"] = masked_image["image"]
@@ -180,8 +194,6 @@ def inference(
     # number of denoising steps run during inference (the higher the better)
     with torch.autocast("cuda"):
         images: List[Image.Image] = pipe(**input_kwargs)["images"]
-    # image.show()
-
     return images
 
 
