@@ -87,8 +87,8 @@ def inference(
     # for repeatable results; tensor generated on cpu for model parallel
     if multi:
         # generator cant be pickled
+        # NOTE fixed seed with multiples gpus should be different for each one but fixed!
         generator = seed
-        # TODO fixed seed with multiples gpus should be different for each one but fixed!
     else:
         generator = (
             torch.Generator(f"cuda:{devices[0]}" if not MP else "cpu").manual_seed(seed)

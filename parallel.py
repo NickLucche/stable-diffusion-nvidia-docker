@@ -12,6 +12,7 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 from utils import ToGPUWrapper, dummy_checker, dummy_extractor, remove_nsfw
 from typing import Any, Dict, List, Optional, Union
+import random
 
 ## Data Parallel: each process handles a copy of the model, executed on a different device ##
 ## +Model Parallel: model components are (potentially) scattered across different devices, each model handled by a process ##
@@ -27,6 +28,8 @@ def cuda_inference_process(
     into an output queue.
     """
     mp_ass: Dict[int, int] = model_kwargs.pop("model_parallel_assignment", None)
+    # each worker gets a different starting seed so they can be fixed and yet produce different results 
+    worker_seed = random.randint(0, int(2**32-1))
     try:
         if mp_ass is None:
             device_id = devices[worker_id]
@@ -86,7 +89,7 @@ def cuda_inference_process(
             # actual inference
             # print("Inference", prompts, kwargs, model.device)
             if kwargs["generator"] is not None and kwargs["generator"] > 0:
-                seed = kwargs["generator"]
+                seed = kwargs["generator"] + worker_seed
                 kwargs["generator"] = torch.Generator(f"cuda:{device_id}" if mp_ass is None else "cpu").manual_seed(seed)
             else:
                 kwargs.pop("generator", None)
