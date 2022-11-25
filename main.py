@@ -1,5 +1,6 @@
 from typing import List
 from diffusers import StableDiffusionPipeline
+from diffusers.pipelines.stable_diffusion import StableDiffusionImg2ImgPipeline
 import torch
 from PIL import Image
 from diffusers.pipelines.stable_diffusion.safety_checker import (
@@ -9,7 +10,7 @@ import os
 from utils import ModelParts2GPUsAssigner, get_gpu_setting, dummy_checker, remove_nsfw
 from parallel import StableDiffusionModelParallel, StableDiffusionMultiProcessing
 from schedulers import schedulers
-
+import numpy as np
 
 TOKEN = os.environ.get("TOKEN", None)
 # TODO change from UI and require reload
@@ -17,7 +18,7 @@ MODEL_ID = os.environ.get("MODEL_ID", "stabilityai/stable-diffusion-2-base")
 
 fp16 = bool(int(os.environ.get("FP16", 1)))
 # MP = bool(int(os.environ.get("MODEL_PARALLEL", 0)))
-MP = False # disabled
+MP = False  # disabled
 if TOKEN is None:
     raise Exception(
         "Unable to read huggingface token! Make sure to get your token here https://huggingface.co/settings/tokens and set the corresponding env variable with `docker run --env TOKEN=<YOUR_TOKEN>`"
@@ -34,12 +35,12 @@ kwargs = dict(
     revision="fp16" if fp16 else None,
     torch_dtype=torch.float16 if fp16 else None,
     use_auth_token=TOKEN,
-    requires_safety_checker=False
+    requires_safety_checker=False,
 )
 
 model_ass = None
 # single-gpu multiple models currently disabled
-if MP and len(devices)>1:
+if MP and len(devices) > 1:
     # setup for model parallel: find model parts->gpus assignment
     print(
         f"Looking for a valid assignment in which to split model parts to device(s): {devices}"
@@ -60,9 +61,7 @@ if multi:
         n_procs, devices, model_parallel_assignment=model_ass, **kwargs
     )
 else:
-    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
-        **kwargs
-    )
+    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(**kwargs)
     # remove safety checker so it doesn't use up GPU memory
     safety, safety_extractor = remove_nsfw(pipe)
     if len(devices):
@@ -83,7 +82,26 @@ def inference(
     nsfw_filter=False,
     low_vram=False,
     noise_scheduler=None,
+    input_image=None,
 ):
+    input_kwargs = dict(
+        prompt=prompt,
+        num_inference_steps=num_inference_steps,
+        height=height,
+        width=width,
+        guidance_scale=guidance_scale,
+        generator=generator,
+    )
+    # Img2Img: to avoid re-loading the model, we ""cast"" the pipeline
+    if input_image is not None:
+        # np.count_nonzero(input_image["mask"].convert("1"))
+        input_image = {k: v.resize((width, height)) for k, v in input_image}
+        pipe.__class__ = StableDiffusionImg2ImgPipeline
+        # TODO negative prompt?strength?output type?
+        input_kwargs["init_image"] = input_image["image"]
+    else:
+        pipe.__class__ = StableDiffusionPipeline
+
     # for repeatable results; tensor generated on cpu for model parallel
     if multi:
         # generator cant be pickled
@@ -108,7 +126,7 @@ def inference(
         else:
             # remove safety network from gpu
             remove_nsfw(pipe)
-    
+
     if low_vram:
         # needed on 16GB RAM 768x768 fp32
         pipe.enable_attention_slicing()
@@ -116,26 +134,20 @@ def inference(
         pipe.disable_attention_slicing()
 
     # set noise scheduler for inference
-    # TODO nsfw not working
     if noise_scheduler is not None and noise_scheduler in schedulers:
         if multi:
             pipe.scheduler = noise_scheduler
         else:
             # load scheduler from pre-trained config
-            s = getattr(schedulers[noise_scheduler], "from_config")(pipe.scheduler.config)
+            s = getattr(schedulers[noise_scheduler], "from_config")(
+                pipe.scheduler.config
+            )
             pipe.scheduler = s
 
     prompt = [prompt] * num_images
     # number of denoising steps run during inference (the higher the better)
     with torch.autocast("cuda"):
-        images: List[Image.Image] = pipe(
-            prompt,
-            num_inference_steps=num_inference_steps,
-            height=height,
-            width=width,
-            guidance_scale=guidance_scale,
-            generator=generator,
-        )["images"]
+        images: List[Image.Image] = pipe(**input_kwargs)["images"]
     # image.show()
 
     return images
