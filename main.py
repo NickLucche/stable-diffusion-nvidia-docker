@@ -12,8 +12,12 @@ from schedulers import schedulers
 
 
 TOKEN = os.environ.get("TOKEN", None)
+# TODO change from UI and require reload
+MODEL_ID = os.environ.get("MODEL_ID", "stabilityai/stable-diffusion-2-base")
+
 fp16 = bool(int(os.environ.get("FP16", 1)))
-MP = bool(int(os.environ.get("MODEL_PARALLEL", 0)))
+# MP = bool(int(os.environ.get("MODEL_PARALLEL", 0)))
+MP = False # disabled
 if TOKEN is None:
     raise Exception(
         "Unable to read huggingface token! Make sure to get your token here https://huggingface.co/settings/tokens and set the corresponding env variable with `docker run --env TOKEN=<YOUR_TOKEN>`"
@@ -26,10 +30,11 @@ from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 multi, devices = get_gpu_setting(os.environ.get("DEVICES", "0"))
 # If you are limited by GPU memory and have less than 10GB of GPU RAM available, please make sure to load the StableDiffusionPipeline in float16 precision
 kwargs = dict(
-    pretrained_model_name_or_path="CompVis/stable-diffusion-v1-4",
+    pretrained_model_name_or_path=MODEL_ID,
     revision="fp16" if fp16 else None,
     torch_dtype=torch.float16 if fp16 else None,
     use_auth_token=TOKEN,
+    requires_safety_checker=False
 )
 
 model_ass = None
@@ -55,11 +60,6 @@ if multi:
         n_procs, devices, model_parallel_assignment=model_ass, **kwargs
     )
 else:
-    # TODO 
-    # if MP:
-        # pipe = StableDiffusionModelParallel.from_pretrained(**kwargs).to(model_ass[0])
-        # safety, safety_extractor = remove_nsfw(pipe)
-    # else:
     pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
         **kwargs
     )
@@ -81,11 +81,13 @@ def inference(
     guidance_scale=7,
     seed=None,
     nsfw_filter=False,
+    low_vram=False,
     noise_scheduler=None,
 ):
     # for repeatable results; tensor generated on cpu for model parallel
     if multi:
         # generator cant be pickled
+        # NOTE fixed seed with multiples gpus should be different for each one but fixed!
         generator = seed
     else:
         generator = (
@@ -106,14 +108,22 @@ def inference(
         else:
             # remove safety network from gpu
             remove_nsfw(pipe)
+    
+    if low_vram:
+        # needed on 16GB RAM 768x768 fp32
+        pipe.enable_attention_slicing()
+    else:
+        pipe.disable_attention_slicing()
 
     # set noise scheduler for inference
+    # TODO nsfw not working
     if noise_scheduler is not None and noise_scheduler in schedulers:
         if multi:
             pipe.scheduler = noise_scheduler
         else:
-            scls, skwargs = schedulers[noise_scheduler]
-            pipe.scheduler = scls(**skwargs)
+            # load scheduler from pre-trained config
+            s = getattr(schedulers[noise_scheduler], "from_config")(pipe.scheduler.config)
+            pipe.scheduler = s
 
     prompt = [prompt] * num_images
     # number of denoising steps run during inference (the higher the better)
@@ -125,7 +135,7 @@ def inference(
             width=width,
             guidance_scale=guidance_scale,
             generator=generator,
-        )["sample"]
+        )["images"]
     # image.show()
 
     return images

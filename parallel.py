@@ -2,6 +2,7 @@ import numpy as np
 from PIL import Image
 import torch
 import torch.multiprocessing as mp
+import torch.nn as nn
 from transformers import CLIPConfig
 from schedulers import schedulers
 import pickle
@@ -11,6 +12,7 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 from utils import ToGPUWrapper, dummy_checker, dummy_extractor, remove_nsfw
 from typing import Any, Dict, List, Optional, Union
+import random
 
 ## Data Parallel: each process handles a copy of the model, executed on a different device ##
 ## +Model Parallel: model components are (potentially) scattered across different devices, each model handled by a process ##
@@ -26,6 +28,8 @@ def cuda_inference_process(
     into an output queue.
     """
     mp_ass: Dict[int, int] = model_kwargs.pop("model_parallel_assignment", None)
+    # each worker gets a different starting seed so they can be fixed and yet produce different results 
+    worker_seed = random.randint(0, int(2**32-1))
     try:
         if mp_ass is None:
             device_id = devices[worker_id]
@@ -51,7 +55,8 @@ def cuda_inference_process(
             CLIPConfig(**model_kwargs.pop("clip_config"))
         )
         out_q.put(True)
-    except:
+    except Exception as e:
+        print(e)
         out_q.put(False)
         return
     # inference loop
@@ -73,8 +78,10 @@ def cuda_inference_process(
                 else:
                     remove_nsfw(model)
             elif prompts == "scheduler":
-                scls, skwargs = schedulers[kwargs]
-                model.scheduler = scls(**skwargs)
+                s = getattr(schedulers[kwargs], "from_config")(model.scheduler.config)
+                model.scheduler = s
+            elif prompts == "low_vram":
+                model.enable_attention_slicing(kwargs)
             continue
         if not len(prompts):
             images = []
@@ -82,12 +89,12 @@ def cuda_inference_process(
             # actual inference
             # print("Inference", prompts, kwargs, model.device)
             if kwargs["generator"] is not None and kwargs["generator"] > 0:
-                seed = kwargs["generator"]
+                seed = kwargs["generator"] + worker_seed
                 kwargs["generator"] = torch.Generator(f"cuda:{device_id}" if mp_ass is None else "cpu").manual_seed(seed)
             else:
                 kwargs.pop("generator", None)
             with torch.autocast("cuda"):
-                images: List[Image.Image] = model(prompts, **kwargs)["sample"]
+                images: List[Image.Image] = model(prompts, **kwargs).images
         out_q.put(images)
 
 
@@ -118,7 +125,7 @@ class StableDiffusionMultiProcessing(object):
         # request inference and block for result
         res = self._send_cmd(prompts, [kwargs] * self.n)
         # mimic interface
-        return {"sample": [img for images in res for img in images]}
+        return {"images": [img for images in res for img in images]}
 
     @classmethod
     def from_pretrained(
@@ -192,6 +199,12 @@ class StableDiffusionMultiProcessing(object):
             return
         self._scheduler = value
         self._send_cmd(["scheduler"] * self.n, [value] * self.n, wait_ack=False)
+    
+    def enable_attention_slicing(self):
+        self._send_cmd(["low_vram"] * self.n, ["auto"] * self.n, wait_ack=False)
+
+    def disable_attention_slicing(self):
+        self._send_cmd(["low_vram"] * self.n, [None] * self.n, wait_ack=False)
 
 
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
@@ -250,12 +263,20 @@ class StableDiffusionModelParallel(StableDiffusionPipeline):
             "mid_block",
         ]:
             module = getattr(self.unet, layer)
-            setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[0]))
+            if type(module) is nn.ModuleList:
+                mlist = nn.ModuleList([ToGPUWrapper(mod, part_to_device[0]) for mod in module])
+                setattr(self.unet, layer, mlist)
+            else:
+                setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[0]))
 
         # move decoder
         for layer in ["up_blocks", "conv_norm_out", "conv_act", "conv_out"]:
             module = getattr(self.unet, layer)
-            setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[1]))
+            if type(module) is nn.ModuleList:
+                mlist = nn.ModuleList([ToGPUWrapper(mod, part_to_device[1]) for mod in module])
+                setattr(self.unet, layer, mlist)
+            else:
+                setattr(self.unet, layer, ToGPUWrapper(module, part_to_device[1]))
 
         # need to wrap scheduler.step to move sampled noise to unet gpu
         self._wrap_scheduler_step()
