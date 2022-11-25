@@ -7,7 +7,15 @@ import json
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
-    from main import inference, MP as model_parallel, MODEL_ID, devices
+    from main import inference, MP as model_parallel, MODEL_ID, devices, load_pipeline
+    def change_model(choice: str):
+        if choice == "Base Model":
+            load_pipeline(MODEL_ID, devices)
+            return gr.Image.update(interactive=False)
+        elif choice == "Inpainting":
+            load_pipeline("stable-diffusion-2-inpainting", devices)
+            return gr.Image.update(interactive=True)
+
     prompts = []
     def dream(
         prompt: str,
@@ -51,13 +59,16 @@ if __name__ == "__main__":
                             inputs.append(gr.Image(type="pil", tool='sketch-color', label="Sketch2Img"))
                     with gr.TabItem("Image Inpainting"):
                         with gr.Column():
-                            # gr.Markdown("NOTE: Using image inpainting requires re-loading a different model from disk!")
-                            inputs.append(gr.Image(type="pil", tool='sketch', label="Image Conditioning or Inpaint")),
+                            gr.Markdown("NOTE: Using image inpainting requires loading a different model from disk!")
+                            inpainting = gr.Image(type="pil", tool='sketch', label="Image Inpaint", interactive=False)
+                            inputs.append(inpainting),
                 with gr.Row():
                     clear_btn = gr.Button("Clear", variant="secondary")
                     button = gr.Button("Generate Image!", variant="primary")
             with gr.Column(variant="box"):
-                outputs=[gr.Gallery(show_label=False).style(grid=2, container=True), gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True)]           
+                outputs=[gr.Gallery(show_label=False).style(grid=2, container=True)]           
+                load_radio = gr.Radio(["Base Model", "Inpainting"], value="Base Model",label="Model to load:")
+                outputs.append(gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True))
         # sample prompt from https://strikingloo.github.io/DALL-E-2-prompt-guide
         # NOTE prompt MUST be first input, since it is passed here
         gr.Examples(["A digital illustration of a medieval town, 4k, detailed, trending in artstation, fantasy"], inputs=inputs[:1])
@@ -77,4 +88,5 @@ if __name__ == "__main__":
             }
             """,
         )
+        load_radio.change(change_model, inputs=load_radio,outputs=inpainting)
         demo.launch(share=False)
