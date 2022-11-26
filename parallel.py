@@ -89,6 +89,12 @@ def cuda_inference_process(
                     model.__class__ = StableDiffusionImg2ImgPipeline
                 elif kwargs == "inpaint":
                     model.__class__ = StableDiffusionInpaintPipeline
+            elif prompts == "reload_model":
+                print(f"Worker {device_id}- Reloading model from disk..")
+                model_kwargs["pretrained_model_name_or_path"] = kwargs
+                model = StableDiffusionPipeline.from_pretrained(**model_kwargs).to(f"cuda:{device_id}")
+                # send back ack
+                out_q.put(True)
             continue
         if not len(prompts):
             images = []
@@ -225,6 +231,13 @@ class StableDiffusionMultiProcessing(object):
             return
         self._pipeline_type = new_type
         self._send_cmd_to_all("pipeline_type", new_type, wait_ack=False)
+
+    def reload_model(self, model_or_path: str):
+        # reset all other options to default so they can be restored on next call
+        self._send_cmd_to_all("reload_model", model_or_path, wait_ack=True)
+        self._safety_checker = "dummy"
+        self._scheduler = "PNDM"
+        self._pipeline_type = "text"
 
 
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
