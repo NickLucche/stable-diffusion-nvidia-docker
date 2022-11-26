@@ -16,7 +16,6 @@ from schedulers import schedulers
 import numpy as np
 
 TOKEN = os.environ.get("TOKEN", None)
-# TODO change from UI and require reload
 MODEL_ID = os.environ.get("MODEL_ID", "stabilityai/stable-diffusion-2-base")
 
 fp16 = bool(int(os.environ.get("FP16", 1)))
@@ -65,7 +64,10 @@ def load_pipeline(model_or_path, devices: List[int]):
             )
         print("Assignments:", model_ass)
 
-    if multi:
+    if multi and pipe is not None:
+        # avoid re-creating processes in multi-gpu mode, have them reload a different model
+        pipe.reload_model(model_or_path)
+    elif multi:
         # DataParallel: one process *per GPU* (each has a copy of the model)
         # ModelParallel: one process *per model*, each model (possibly) on multiple GPUs
         n_procs = len(devices) if not MP else len(model_ass)
@@ -154,7 +156,7 @@ def inference(
     # for repeatable results; tensor generated on cpu for model parallel
     if multi:
         # generator cant be pickled
-        # NOTE fixed seed with multiples gpus should be different for each one but fixed!
+        # NOTE fixed seed with multiples gpus will be different for each one but fixed!
         input_kwargs["generator"] = seed
     elif seed is not None and seed > 0:
         input_kwargs["generator"] = torch.Generator(

@@ -30,7 +30,7 @@ if __name__ == "__main__":
 
         return images, prompts
 
-    # default model does not have nsfw safety checker
+    # v2 model was trained on sfw data only, hence no safety checker
     enable_nsfw_toggle=not model_parallel and MODEL_ID!="stabilityai/stable-diffusion-2-base"
 
     with gr.Blocks() as demo:
