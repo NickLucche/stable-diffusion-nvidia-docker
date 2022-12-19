@@ -6,7 +6,7 @@ I also took the liberty of throwing in a simple web UI (made with gradio) to wra
 
 ~~**UPDATE 2:** we now support inference on multiple GPUs with a "Model Parallel" approach (see `Multi-GPU` section).~~
 
-**UPDATE 3 but really it's a 2:** [Stable Diffusion 2.0](https://stability.ai/blog/stable-diffusion-v2-release) is out generating images more beautiful than ever! This is now the default model being loaded and it supports all previous features and more, give it a try!
+**UPDATE 3 but really it's a v2:** [Stable Diffusion 2.0](https://stability.ai/blog/stable-diffusion-v2-release) is out generating images more beautiful than ever! This is now the default model being loaded and it supports all previous features and more. I've also added support for *img2img* and *image inpainting* and refreshed the UI, give it a try! 
 
 # Requirements
  - OS: Ubuntu (tested on 20.04) or Windows (tested on Windows 10 21H2)
@@ -118,7 +118,7 @@ Fixed seed, same input, increase `guidance_scale` (more "adherent" to text) with
 
 
 ## TODO
- - [ ] allow other input modalities (images)
+ - [x] allow other input modalities (images)
  - [ ] support extra v2 features (depth-based generation, upscaling) 
  - [x] move model to specifiec GPU number (env variable)
  - [x] multi-gpu support (data parallel)

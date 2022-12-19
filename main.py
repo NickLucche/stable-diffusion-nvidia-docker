@@ -28,7 +28,7 @@ if TOKEN is None:
 MIN_INPAINT_MASK_PERCENT = 0.1
 
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
-
+# FIXME devices=0,1 causes cuda error on memory access..?
 # create and move model to GPU(s), defaults to GPU 0
 multi, devices = get_gpu_setting(os.environ.get("DEVICES", "0"))
 # If you are limited by GPU memory and have less than 10GB of GPU RAM available, please make sure to load the StableDiffusionPipeline in float16 precision
