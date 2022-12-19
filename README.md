@@ -6,14 +6,14 @@ I also took the liberty of throwing in a simple web UI (made with gradio) to wra
 
 ~~**UPDATE 2:** we now support inference on multiple GPUs with a "Model Parallel" approach (see `Multi-GPU` section).~~
 
-**UPDATE 3 but really it's a 2:** [Stable Diffusion 2.0](https://stability.ai/blog/stable-diffusion-v2-release) is out generating images more beautiful than ever! This is now the default model being loaded and it supports all previous features and more, give it a try!
+**UPDATE 3 but really it's a v2:** [Stable Diffusion 2.0](https://stability.ai/blog/stable-diffusion-v2-release) is out generating images more beautiful than ever! This is now the default model being loaded and it supports all previous features and more. I've also added support for *img2img* and *image inpainting* and refreshed the UI, give it a try! 
 
 # Requirements
  - OS: Ubuntu (tested on 20.04) or Windows (tested on Windows 10 21H2)
  - Nvidia GPU with at least 6GB vRAM (gtx 700 onward, please refer [here](https://docs.nvidia.com/deeplearning/cudnn/support-matrix/index.html)). Mind that the bigger the image size (or the number of images) you want to dream, the more memory you're gonna need. For reference, dreaming a 256x256 image should take up ~5gb, while a 512x512 around 7gb. 
  - Free Disk space > 2.8gb
  - Docker and Nvidia-docker.
- - HuggingFace account as well as registration to this repository https://huggingface.co/CompVis/stable-diffusion-v1-4 (simply click on `Access Repository`).
+ - HuggingFace account as well as ~~registration to this repository https://huggingface.co/CompVis/stable-diffusion-v1-4 (simply click on `Access Repository`)~~. No longer needed if you use default v2 model (see "About model versions" below).
 
 # Installation
 
@@ -26,10 +26,11 @@ Note that you will need a huggingface token, you can get yours at https://huggin
 
 My advice is that you start the container with:
 
-`docker run --name stable-diffusion --gpus all -it -e TOKEN=<YOUR_TOKEN> -p 7860:7860 nicklucche/stable-diffusion` 
+`docker run --name stable-diffusion --pull=always --gpus all -it -e TOKEN=<YOUR_TOKEN> -p 7860:7860 nicklucche/stable-diffusion` 
 
 the *first time* you run it, as it will download the model weights (can take a few minutes to do so) and store them on disk (as long as you don't delete the container).
 Then you can simply do `docker stop stable-diffusion` to stop the container and `docker start stable-diffusion` to bring it back up whenever you need.
+`--pull=always` is to make sure you get the latest image from dockerhub, you can skip it if you already have it locally.
 
 Once the init phase is finished a message will pop-up in your terminal (`docker logs stable-diffusion`) and you should be able to head to http://localhost:7860/ in your favorite browser and see something like this:
 
@@ -72,7 +73,7 @@ Note that if your system has highly imbalanced GPU memory distribution (e.g. gpu
 
 By default, the model loaded is [stabilityai/stable-diffusion-2-base](https://huggingface.co/stabilityai/stable-diffusion-2-base). Many other checkpoints have been created that are compatible with [diffusers](https://github.com/huggingface/diffusers) (awesome library, ckeck it out) and you can provide them as an additional environment variable like so:
 
-`-e MODEL_ID runwayml/stable-diffusion-v1-5`
+`-e MODEL_ID=runwayml/stable-diffusion-v1-5`
 
 Model weights are downloaded to and loaded from `/root/.cache/huggingface/diffusers`, so if you want to share your model across multiple containers runs, you can provide this path as a [docker volume](https://docs.docker.com/storage/volumes/):
 
@@ -117,7 +118,7 @@ Fixed seed, same input, increase `guidance_scale` (more "adherent" to text) with
 
 
 ## TODO
- - [ ] allow other input modalities (images)
+ - [x] allow other input modalities (images)
  - [ ] support extra v2 features (depth-based generation, upscaling) 
  - [x] move model to specifiec GPU number (env variable)
  - [x] multi-gpu support (data parallel)
