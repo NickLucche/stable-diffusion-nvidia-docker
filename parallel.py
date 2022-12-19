@@ -27,11 +27,14 @@ def cuda_inference_process(
     It's a simple loop in which the worker pulls data from a shared input queue, and puts result
     into an output queue.
     """
+    # wont work in pytorch 1.12 https://github.com/pytorch/pytorch/issues/80876
+    # os.environ["CUDA_VISIBLE_DEVICES"]=str(device_id)
     mp_ass: Dict[int, int] = model_kwargs.pop("model_parallel_assignment", None)
     # each worker gets a different starting seed so they can be fixed and yet produce different results
     worker_seed = random.randint(0, int(2**32 - 1))
     try:
         if mp_ass is None:
+            # TODO should we make sure we're downloading the model only once?
             device_id = devices[worker_id]
             print(
                 f"Creating and moving model to cuda:{device_id} ({torch.cuda.get_device_name(device_id)}).."
@@ -108,8 +111,12 @@ def cuda_inference_process(
                 ).manual_seed(seed)
             else:
                 kwargs.pop("generator", None)
-            with torch.autocast("cuda"):
-                images: List[Image.Image] = model(prompts, **kwargs).images
+            try:
+                with torch.autocast("cuda"):
+                    images: List[Image.Image] = model(prompts, **kwargs).images
+            except Exception as e:
+                print(f"[Model {device_id}] Error during inference:", e)
+                images = [Image.fromarray(np.zeros((kwargs["height"], kwargs["width"], 3), dtype=np.uint8))]
         out_q.put(images)
 
 
@@ -136,13 +143,13 @@ class StableDiffusionMultiProcessing(object):
     def _send_cmd_to_all(self, k1, k2, wait_ack=True):
         return self._send_cmd([k1] * self.n, [k2] * self.n, wait_ack=wait_ack)
 
-    def __call__(self, prompts, **kwargs):
+    def __call__(self, prompt, **kwargs):
         # run inference on different processes, each handles a model on a different GPU (split load evenly)
         # print("prompts!", prompts)
         # FIXME when n_prompts < n, unused processes get an empty list as input, so we can always wait all processes
-        prompts = [list(p) for p in np.array_split(prompts, self.n)]
+        prompt = [list(p) for p in np.array_split(prompt, self.n)]
         # request inference and block for result
-        res = self._send_cmd(prompts, [kwargs] * self.n)
+        res = self._send_cmd(prompt, [kwargs] * self.n)
         # mimic interface
         return {"images": [img for images in res for img in images]}
 

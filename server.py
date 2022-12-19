@@ -13,7 +13,7 @@ if __name__ == "__main__":
             load_pipeline(MODEL_ID, devices)
             return gr.Image.update(interactive=False)
         elif choice == "Inpainting":
-            load_pipeline("stable-diffusion-2-inpainting", devices)
+            load_pipeline("stabilityai/stable-diffusion-2-inpainting", devices)
             return gr.Image.update(interactive=True)
 
     prompts = []
@@ -54,9 +54,11 @@ if __name__ == "__main__":
                             inputs.append(gr.Dropdown(schedulers_names, value="PNDM", label="Noise Scheduler")),
                     with gr.TabItem("Img2Img"):
                         with gr.Column():
+                            gr.Markdown("Image and prompt guided generation. Use one of the box below to provide an input image: if two are provided, `Sketch2Img` has priority. Remember to clear the input by pressing `clear`.")
                             inputs.append(gr.Slider(0, 1, 0.25, step=0.05, label="Img2Img input fidelity")),
                             inputs.append(gr.Image(type="pil", tool=None, label="Image Conditioning")),
-                            inputs.append(gr.Image(type="pil", tool='sketch-color', label="Sketch2Img"))
+                            # FIXME state is not resetting when clicking x! resets when clear is pressed
+                            inputs.append(gr.Image(type="pil", source='canvas', tool='color-sketch', label="Sketch2Img"))
                     with gr.TabItem("Image Inpainting"):
                         with gr.Column():
                             gr.Markdown("NOTE: Using image inpainting requires loading a different model from disk!")
