@@ -2,7 +2,6 @@ FROM ghcr.io/pytorch/pytorch:2.0.0-runtime
 COPY . /app
 WORKDIR /app
 RUN pip install -r requirements.txt
-RUN pip install --upgrade 
 ENV GRADIO_SERVER_PORT=7860
 ENV GRADIO_SERVER_NAME=0.0.0.0
 EXPOSE 7860
