@@ -12,6 +12,7 @@ from schedulers import schedulers
 
 
 TOKEN = os.environ.get("TOKEN", None)
+TORCH_COMPILE = os.environ.get("TORCH_COMPILE", None)
 # TODO change from UI and require reload
 MODEL_ID = os.environ.get("MODEL_ID", "stabilityai/stable-diffusion-2-base")
 
@@ -67,6 +68,8 @@ else:
     safety, safety_extractor = remove_nsfw(pipe)
     if len(devices):
         pipe.to(f"cuda:{devices[0]}")
+    if TORCH_COMPILE:
+        pipe.unet = torch.compile(pipe.unet)
 
 
 print("Ready!")

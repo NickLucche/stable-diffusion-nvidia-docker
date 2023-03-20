@@ -22,6 +22,7 @@ def cuda_inference_process(
     in_q: mp.Queue,
     out_q: mp.Queue,
     model_kwargs: Dict[Any, Any],
+    compile=False
 ):
     """Code executed by the torch.multiprocessing process, handling inference on device `device_id`.
     It's a simple loop in which the worker pulls data from a shared input queue, and puts result
@@ -46,6 +47,9 @@ def cuda_inference_process(
             model = StableDiffusionModelParallel.from_pretrained(**model_kwargs).to(
                 mp_ass
             )
+        # TODO compile once per process
+        # if compile:
+            # model.unet = torch.compile(model.unet)
         # disable nsfw filter by default
         safety_checker, safety_extr = remove_nsfw(model)
 
