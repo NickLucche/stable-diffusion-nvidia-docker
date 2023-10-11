@@ -4,31 +4,41 @@ import torch.multiprocessing as mp
 from schedulers import schedulers_names
 import json
 
+def pop_up_exceptions(func):
+    def wrapper(*args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+        except Exception as e:
+            raise gr.Error(str(e))
+        return result
+    return wrapper
+
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
     from main import inference, MP as model_parallel, MODEL_ID, devices, load_pipeline
+    @pop_up_exceptions
     def change_model(choice: str):
         if choice == "Base Model":
             load_pipeline(MODEL_ID, devices)
-            return gr.Image.update(interactive=False)
         elif choice == "Inpainting":
             load_pipeline("stabilityai/stable-diffusion-2-inpainting", devices)
-            return gr.Image.update(interactive=True)
+        return gr.Image.update(interactive=choice =="Inpainting")
 
-    prompts = []
+    history = []
+    @pop_up_exceptions
     def dream(
         prompt: str,
         *args
     ):
         # return [(np.random.randn(512, 512, 3)).astype(np.uint8)], [["test"]]
         if not len(prompt.strip()):
-            return [], prompts
+            return [], history
         images = inference(prompt, *args)
-        if not len(prompts) or [prompt] != prompts[-1]:
-            prompts.append([prompt])
+        if not len(history) or [prompt] != history[-1]:
+            history.append([prompt])
 
-        return images, prompts
+        return images, history
 
     # v2 model was trained on sfw data only, hence no safety checker
     enable_nsfw_toggle=not model_parallel and MODEL_ID!="stabilityai/stable-diffusion-2-base"

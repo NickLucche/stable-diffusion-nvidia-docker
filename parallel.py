@@ -161,6 +161,7 @@ class StableDiffusionMultiProcessing(object):
         cls.q = mp.Queue()
         cls.outq = mp.Queue()
         # load nsfw filter CLIP configuration
+        # TODO still needed?
         with open("./clip_config.pickle", "rb") as f:
             d = pickle.load(f)
         kwargs["clip_config"] = d
