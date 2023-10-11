@@ -1,8 +1,13 @@
 name: Docker Build and Push CI
 
 on:
+  pull_request:
+    branches: ['master']
+    paths: 
+      - '**.py'
+      - 'Dockerfile'
   push:
-    branches: ['master', 'img2img']
+    branches: ['master']
     paths: 
       - '**.py'
       - 'Dockerfile'
