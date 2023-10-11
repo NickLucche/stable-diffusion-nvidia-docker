@@ -1,11 +1,6 @@
 name: Docker Build and Push CI
 
 on:
-  pull_request:
-    branches: ['master']
-    paths: 
-      - '**.py'
-      - 'Dockerfile'
   push:
     branches: ['master']
     paths: 
@@ -29,5 +24,4 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           push: true
-          tags: nicklucche/stable-diffusion:v2
-
+          tags: nicklucche/stable-diffusion:latest

@@ -1,0 +1,12 @@
+name: Docker Build
+
+on:
+  pull_request:
+    branches: ['master']
+    paths: 
+      - '**.py'
+      - 'Dockerfile'
+jobs:
+  docker:
+    using: 'docker'
+    image: 'Dockerfile'
