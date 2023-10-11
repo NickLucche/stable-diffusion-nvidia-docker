@@ -21,10 +21,6 @@ MODEL_ID = os.environ.get("MODEL_ID", "stabilityai/stable-diffusion-2-base")
 fp16 = bool(int(os.environ.get("FP16", 1)))
 # MP = bool(int(os.environ.get("MODEL_PARALLEL", 0)))
 MP = False  # disabled
-if TOKEN is None:
-    raise Exception(
-        "Unable to read huggingface token! Make sure to get your token here https://huggingface.co/settings/tokens and set the corresponding env variable with `docker run --env TOKEN=<YOUR_TOKEN>`"
-    )
 MIN_INPAINT_MASK_PERCENT = 0.1
 
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
@@ -50,6 +46,7 @@ def load_pipeline(model_or_path, devices: List[int]):
 
     model_ass = None
     print(f"Loading {model_or_path} from disk..")
+    kwargs["pretrained_model_name_or_path"] = model_or_path
     # single-gpu multiple models currently disabled
     if MP and len(devices) > 1:
         # setup for model parallel: find model parts->gpus assignment
@@ -125,7 +122,7 @@ def inference(
         else:
             pipe.__class__ = StableDiffusionImg2ImgPipeline
         # TODO negative prompt?
-        input_kwargs["init_image"] = input_image
+        input_kwargs["init_image"] = [input_image] * num_images
         input_kwargs["strength"] = 1.0 - inv_strenght
     elif masked_image is not None:
         # TODO load inpainting model
@@ -138,6 +135,7 @@ def inference(
         if np.count_nonzero(masked_image["mask"].convert("1")) < (
             width * height * MIN_INPAINT_MASK_PERCENT
         ):
+            # FIXME error handling
             raise Exception("ERROR: mask is too small!")
         if multi:
             pipe.change_pipeline_type("inpaint")
