@@ -22,11 +22,10 @@ First of all, make sure to have docker and nvidia-docker installed in your machi
 **Windows users**: [install WSL/Ubuntu](https://stackoverflow.com/a/56783810) from store->install [docker](https://docs.docker.com/desktop/windows/wsl/) and start it->update Windows 10 to version 21H2 (Windows 11 should be ok as is)->test out [GPU-support](https://docs.nvidia.com/cuda/wsl-user-guide/index.html#cuda-support-for-wsl2) (a simple `nvidia-smi` in WSL should do). If `nvidia-smi` does not work from WSL, make sure you have updated your nvidia drivers from the official app. 
 
 The easiest way to try out the model is to simply use the pre-built image at `nicklucche/stable-diffusion`.   
-Note that you will need a huggingface token, you can get yours at https://huggingface.co/settings/tokens after registering for free on their website.
 
 My advice is that you start the container with:
 
-`docker run --name stable-diffusion --pull=always --gpus all -it -e TOKEN=<YOUR_TOKEN> -p 7860:7860 nicklucche/stable-diffusion` 
+`docker run --name stable-diffusion --pull=always --gpus all -it -p 7860:7860 nicklucche/stable-diffusion` 
 
 the *first time* you run it, as it will download the model weights (can take a few minutes to do so) and store them on disk (as long as you don't delete the container).
 Then you can simply do `docker stop stable-diffusion` to stop the container and `docker start stable-diffusion` to bring it back up whenever you need.
@@ -69,7 +68,7 @@ You can try out this option with:
 
 Note that if your system has highly imbalanced GPU memory distribution (e.g. gpu0->6Gb, gpu1->24Gb.. ) the smallest device might bottleneck the inference process; the easiest way to fix that, is to ignore the smallest device by *not* specifying it in the `DEVICES` list (e.g. `-e DEVICES=1,2..`).
 
-## About model versions
+## About models
 
 By default, the model loaded is [stabilityai/stable-diffusion-2-base](https://huggingface.co/stabilityai/stable-diffusion-2-base). Many other checkpoints have been created that are compatible with [diffusers](https://github.com/huggingface/diffusers) (awesome library, ckeck it out) and you can provide them as an additional environment variable like so:
 
@@ -80,6 +79,8 @@ Model weights are downloaded to and loaded from `/root/.cache/huggingface/diffus
 `-v /path/to/your/hugginface/cache:/root/.cache/huggingface/diffusers`
 
 Mind that the host path (first path up to ":") might very well be the same as the second if you're using the same diffusers library on the host and you didn't modify `HF_HOME`.
+
+Some models may require a huggingface token to be downloaded, you can get yours at https://huggingface.co/settings/tokens after registering for free on their website. You can then add the token to your env with `-e TOKEN=<YOUR_TOKEN>`.
 
 **P.S:** Feel free to open an issue for any problem you may face during installation.
 
