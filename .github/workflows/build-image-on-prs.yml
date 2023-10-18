@@ -17,5 +17,5 @@ jobs:
       # cpu-only tests on github runner, override entrypoint while mounting whole repo 
       # TODO: consider artifacts or git lfs to avoid downloading models for testing 
       - name: Run Tests
-        run: docker run --entrypoint bash --rm -v .:/app2 stable-diffusion -c 'cd /app2 && python3 -m pip install pytest && python3 -m pytest -v tests/'
+        run: docker run --entrypoint bash --rm -v .:/app2 stable-diffusion:pr -c 'cd /app2 && python3 -m pip install pytest && python3 -m pytest -v tests/'
 
