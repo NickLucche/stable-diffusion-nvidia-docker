@@ -19,7 +19,7 @@ def txt2img() -> StableDiffusionPipeline:
         "stabilityai/stable-diffusion-2-base"
     )
     if torch.cuda.is_available():
-        pipe.cuda()
+        pipe.to(torch.device("cuda"))
     return pipe
 
 
@@ -65,6 +65,7 @@ def test_img2img_pipeline():
         height=512,
         width=512,
         input_image=image,
+        inv_strenght=0.5
     )
     assert len(images) == 1 and images[0].size == (512, 512)
 

@@ -24,6 +24,7 @@ MP = False  # disabled
 MIN_INPAINT_MASK_PERCENT = 0.1
 
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
+
 # FIXME devices=0,1 causes cuda error on memory access..?
 # create and move model to GPU(s), defaults to GPU 0
 multi, devices = get_gpu_setting(os.environ.get("DEVICES", "0"))
@@ -37,6 +38,7 @@ kwargs = dict(
 )
 
 pipe, safety, safety_extractor = None, None, None
+
 
 def load_pipeline(model_or_path, devices: List[int]):
     global pipe, safety, safety_extractor
@@ -77,9 +79,10 @@ def load_pipeline(model_or_path, devices: List[int]):
         safety, safety_extractor = remove_nsfw(pipe)
         if len(devices):
             pipe.to(f"cuda:{devices[0]}")
-    
+
     pipe._pipe_name = model_or_path
     print("Model Loaded!")
+
 
 load_pipeline(MODEL_ID, devices)
 
@@ -98,7 +101,7 @@ def inference(
     inv_strenght=0.0,
     input_image=None,
     input_sketch=None,
-    masked_image=None
+    masked_image=None,
 ):
     prompt = [prompt] * num_images
     input_kwargs = dict(
@@ -114,18 +117,18 @@ def inference(
         input_image = input_sketch
 
     # Img2Img: to avoid re-loading the model, we ""cast"" the pipeline
+    # TODO batch images by providing a torch tensor
     if input_image is not None:
-        input_image = input_image.resize((width, height)) 
+        input_image = input_image.resize((width, height))
         # image guided generation
         if multi:
             pipe.change_pipeline_type("img2img")
         else:
             pipe.__class__ = StableDiffusionImg2ImgPipeline
         # TODO negative prompt?
-        input_kwargs["init_image"] = [input_image] * num_images
+        input_kwargs["init_image"] = input_image
         input_kwargs["strength"] = 1.0 - inv_strenght
     elif masked_image is not None:
-        # TODO load inpainting model
         # resize to specified shape
         masked_image = {
             k: v.convert("RGB").resize((width, height)) for k, v in masked_image.items()
@@ -141,10 +144,8 @@ def inference(
             pipe.change_pipeline_type("inpaint")
         else:
             pipe.__class__ = StableDiffusionInpaintPipeline
-        # TODO extra fields? does this weak copy work here??
-        # input_kwargs["prompt"] = "portrait of a man selling paintings with passion"
         input_kwargs["image"] = masked_image["image"]
-        input_kwargs["mask_image"] = masked_image["mask"] 
+        input_kwargs["mask_image"] = masked_image["mask"]
     elif multi:
         # default mode
         pipe.change_pipeline_type("text")
