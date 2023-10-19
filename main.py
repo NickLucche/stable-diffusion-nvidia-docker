@@ -14,41 +14,32 @@ from utils import ModelParts2GPUsAssigner, get_gpu_setting, dummy_checker, remov
 from parallel import StableDiffusionModelParallel, StableDiffusionMultiProcessing
 from schedulers import schedulers
 import numpy as np
+from sb import DiffusionModel
 
+# read env variables
 TOKEN = os.environ.get("TOKEN", None)
 MODEL_ID = os.environ.get("MODEL_ID", "stabilityai/stable-diffusion-2-base")
 
+# If you are limited by GPU memory (e.g <10GB VRAM), please make sure to load in fp16 precision
 fp16 = bool(int(os.environ.get("FP16", 1)))
 # MP = bool(int(os.environ.get("MODEL_PARALLEL", 0)))
 MP = False  # disabled
 MIN_INPAINT_MASK_PERCENT = 0.1
 
-from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
-
 # FIXME devices=0,1 causes cuda error on memory access..?
-# create and move model to GPU(s), defaults to GPU 0
-multi, devices = get_gpu_setting(os.environ.get("DEVICES", "0"))
-# If you are limited by GPU memory and have less than 10GB of GPU RAM available, please make sure to load the StableDiffusionPipeline in float16 precision
-kwargs = dict(
-    pretrained_model_name_or_path=MODEL_ID,
-    revision="fp16" if fp16 else None,
-    torch_dtype=torch.float16 if fp16 else None,
-    use_auth_token=TOKEN,
-    requires_safety_checker=False,
-)
+IS_MULTI, DEVICES = get_gpu_setting(os.environ.get("DEVICES", "0"))
 
-pipe, safety, safety_extractor = None, None, None
-
-
-def load_pipeline(model_or_path, devices: List[int]):
-    global pipe, safety, safety_extractor
-    if pipe is not None and pipe._pipe_name == model_or_path:
-        # avoid re-loading same model
-        return
-
+# TODO is_multi logic stays in main, `DiffusionModel` api will be mimicked by multipr one 
+# TODO docs
+def init_pipeline(model_or_path=MODEL_ID, devices: List[int]=DEVICES)->DiffusionModel:
+    kwargs = dict(
+        pretrained_model_name_or_path=model_or_path,
+        revision="fp16" if fp16 else None,
+        torch_dtype=torch.float16 if fp16 else None,
+        use_auth_token=TOKEN,
+        requires_safety_checker=False,
+    )
     model_ass = None
-    print(f"Loading {model_or_path} from disk..")
-    kwargs["pretrained_model_name_or_path"] = model_or_path
     # single-gpu multiple models currently disabled
     if MP and len(devices) > 1:
         # setup for model parallel: find model parts->gpus assignment
@@ -63,10 +54,12 @@ def load_pipeline(model_or_path, devices: List[int]):
             )
         print("Assignments:", model_ass)
 
-    if multi and pipe is not None:
+    kwargs["pretrained_model_name_or_path"] = model_or_path
+    # TODO move logic
+    # if multi and pipe is not None:
         # avoid re-creating processes in multi-gpu mode, have them reload a different model
-        pipe.reload_model(model_or_path)
-    elif multi:
+        # pipe.reload_model(model_or_path)
+    if IS_MULTI:
         # DataParallel: one process *per GPU* (each has a copy of the model)
         # ModelParallel: one process *per model*, each model (possibly) on multiple GPUs
         n_procs = len(devices) if not MP else len(model_ass)
@@ -74,20 +67,15 @@ def load_pipeline(model_or_path, devices: List[int]):
             n_procs, devices, model_parallel_assignment=model_ass, **kwargs
         )
     else:
-        pipe = StableDiffusionPipeline.from_pretrained(**kwargs)
-        # remove safety checker so it doesn't use up GPU memory
-        safety, safety_extractor = remove_nsfw(pipe)
+        pipe = DiffusionModel.from_pretrained(**kwargs)
         if len(devices):
             pipe.to(f"cuda:{devices[0]}")
 
-    pipe._pipe_name = model_or_path
-    print("Model Loaded!")
-
-
-load_pipeline(MODEL_ID, devices)
+    return pipe
 
 
 def inference(
+    pipe: DiffusionModel,
     prompt,
     num_images=1,
     num_inference_steps=50,
@@ -105,6 +93,7 @@ def inference(
 ):
     prompt = [prompt] * num_images
     input_kwargs = dict(
+        inference_type = "text",
         prompt=prompt,
         num_inference_steps=num_inference_steps,
         height=height,
@@ -116,18 +105,14 @@ def inference(
     if input_sketch is not None:
         input_image = input_sketch
 
-    # Img2Img: to avoid re-loading the model, we ""cast"" the pipeline
     # TODO batch images by providing a torch tensor
     if input_image is not None:
-        input_image = input_image.resize((width, height))
         # image guided generation
-        if multi:
-            pipe.change_pipeline_type("img2img")
-        else:
-            pipe.__class__ = StableDiffusionImg2ImgPipeline
+        input_image = input_image.resize((width, height))
         # TODO negative prompt?
         input_kwargs["init_image"] = input_image
         input_kwargs["strength"] = 1.0 - inv_strenght
+        input_kwargs["inference_type"] = "img2img"
     elif masked_image is not None:
         # resize to specified shape
         masked_image = {
@@ -140,17 +125,9 @@ def inference(
         ):
             # FIXME error handling
             raise Exception("ERROR: mask is too small!")
-        if multi:
-            pipe.change_pipeline_type("inpaint")
-        else:
-            pipe.__class__ = StableDiffusionInpaintPipeline
         input_kwargs["image"] = masked_image["image"]
         input_kwargs["mask_image"] = masked_image["mask"]
-    elif multi:
-        # default mode
-        pipe.change_pipeline_type("text")
-    else:
-        pipe.__class__ = StableDiffusionPipeline
+        input_kwargs["inference_type"] = "inpaint"
 
     # for repeatable results; tensor generated on cpu for model parallel
     if multi:

@@ -13,6 +13,7 @@ from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline, Stable
 from utils import ToGPUWrapper, dummy_checker, dummy_extractor, remove_nsfw
 from typing import Any, Dict, List, Optional, Union
 import random
+from sb import DiffusionModel
 
 ## Data Parallel: each process handles a copy of the model, executed on a different device ##
 ## +Model Parallel: model components are (potentially) scattered across different devices, each model handled by a process ##
@@ -32,6 +33,7 @@ def cuda_inference_process(
     mp_ass: Dict[int, int] = model_kwargs.pop("model_parallel_assignment", None)
     # each worker gets a different starting seed so they can be fixed and yet produce different results
     worker_seed = random.randint(0, int(2**32 - 1))
+    # TODO replace with custom `StableDiffusion` model, single process == multi-process
     try:
         if mp_ass is None:
             # TODO should we make sure we're downloading the model only once?
@@ -39,9 +41,7 @@ def cuda_inference_process(
             print(
                 f"Creating and moving model to cuda:{device_id} ({torch.cuda.get_device_name(device_id)}).."
             )
-            model: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
-                **model_kwargs
-            ).to(f"cuda:{device_id}")
+            model: DiffusionModel = DiffusionModel.from_pretrained(**model_kwargs).to(f"cuda:{device_id}")
         else:
             mp_ass = mp_ass[worker_id]
             print("Model parallel worker component assignment:", mp_ass)
@@ -49,14 +49,13 @@ def cuda_inference_process(
             model = StableDiffusionModelParallel.from_pretrained(**model_kwargs).to(
                 mp_ass
             )
-        # disable nsfw filter by default
-        safety_checker, safety_extr = remove_nsfw(model)
+        # # disable nsfw filter by default
+        # safety_checker, safety_extr = remove_nsfw(model)
 
-        # create nsfw clip filter so we can re-set it if needed
-        # TODO perhaps we can skip this if no one cares about nsfw
-        safety_checker = StableDiffusionSafetyChecker(
-            CLIPConfig(**model_kwargs.pop("clip_config"))
-        )
+        # # create nsfw clip filter so we can re-set it if needed
+        # safety_checker = StableDiffusionSafetyChecker(
+        #     CLIPConfig(**model_kwargs.pop("clip_config"))
+        # )
         out_q.put(True)
     except Exception as e:
         print(e)
@@ -74,6 +73,7 @@ def cuda_inference_process(
                 # TODO
                 raise NotImplementedError()
             elif prompts == "safety_checker":
+                # FIXME move both into StableDiffusionModelParallel
                 # safety checker needs to be moved to GPU (it can cause crashes)
                 if kwargs == "clip":
                     model.safety_checker = safety_checker.to(f"cuda:{device_id}")
@@ -85,17 +85,10 @@ def cuda_inference_process(
                 model.scheduler = s
             elif prompts == "low_vram":
                 model.enable_attention_slicing(kwargs)
-            elif prompts == "pipeline_type":
-                if kwargs == "text":
-                    model.__class__ = StableDiffusionPipeline
-                elif kwargs == "img2img":
-                    model.__class__ = StableDiffusionImg2ImgPipeline
-                elif kwargs == "inpaint":
-                    model.__class__ = StableDiffusionInpaintPipeline
             elif prompts == "reload_model":
                 print(f"Worker {device_id}- Reloading model from disk..")
-                model_kwargs["pretrained_model_name_or_path"] = kwargs
-                model = StableDiffusionPipeline.from_pretrained(**model_kwargs).to(f"cuda:{device_id}")
+                model_path_or_id = kwargs
+                model = model.reload_model(model_path_or_id) # maintains device
                 # send back ack
                 out_q.put(True)
             continue
@@ -143,9 +136,9 @@ class StableDiffusionMultiProcessing(object):
     def _send_cmd_to_all(self, k1, k2, wait_ack=True):
         return self._send_cmd([k1] * self.n, [k2] * self.n, wait_ack=wait_ack)
 
-    def __call__(self, prompt, **kwargs):
+    def __call__(self, inference_type: str, prompt, **kwargs):
         # run inference on different processes, each handles a model on a different GPU (split load evenly)
-        # print("prompts!", prompts)
+        kwargs["inference_type"] = inference_type
         # FIXME when n_prompts < n, unused processes get an empty list as input, so we can always wait all processes
         prompt = [list(p) for p in np.array_split(prompt, self.n)]
         # request inference and block for result
