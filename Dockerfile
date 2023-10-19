@@ -1,6 +1,6 @@
 FROM pytorch/pytorch:1.12.1-cuda11.3-cudnn8-runtime
-COPY . /app
 WORKDIR /app
+COPY *.py requirements.txt /app
 RUN apt update && apt install -y git
 RUN pip install -r requirements.txt
 ENV GRADIO_SERVER_PORT=7860
