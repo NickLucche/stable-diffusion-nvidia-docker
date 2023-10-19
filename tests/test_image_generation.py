@@ -14,7 +14,7 @@ import psutil
 PROMPT = "A starry night"
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def txt2img() -> StableDiffusionPipeline:
     pipe = StableDiffusionPipeline.from_pretrained(
         "stabilityai/stable-diffusion-2-base",
@@ -35,23 +35,19 @@ def requires_cuda(func):
     return wrapper
 
 
-def requires_n_free_GBs(func=None, n: int = 0):
+def check_n_free_GBs(n: int = 0):
     # guard against executing tests where not enough space is present
     # mostly a workaround for github runners (TODO check `HF_HOME` root not /home)
-    def wrapper(*args, **kwargs):
-        ps = psutil.disk_usage("/home")
-        if ps.free / (1024.0**3) < n:
-            pytest.skip(
-                f"This test needs {n} gigabytes to run! Space left is only {ps.free / (1024.0 ** 3)}G."
-            )
-        return func(*args, **kwargs)
-
-    return wrapper
+    ps = psutil.disk_usage("/home")
+    if ps.free / (1024.0**3) < n:
+        pytest.skip(
+            f"This test needs {n} gigabytes to run! Space left is only {ps.free / (1024.0 ** 3)}G."
+        )
 
 
 # these tests have to run on cpu..
-@requires_n_free_GBs(n=17)
 def test_txt2img(txt2img: StableDiffusionPipeline):
+    check_n_free_GBs(n=17)
     input_kwargs = dict(
         prompt=PROMPT,
         num_inference_steps=3,
@@ -64,8 +60,8 @@ def test_txt2img(txt2img: StableDiffusionPipeline):
 
 
 @requires_cuda
-@requires_n_free_GBs(n=2.5)
 def test_txt2img_pipeline():
+    check_n_free_GBs(n=2.5)
     load_pipeline("stabilityai/stable-diffusion-2-base", [0])
     images = inference(
         PROMPT, num_images=1, num_inference_steps=3, height=512, width=512
@@ -74,8 +70,8 @@ def test_txt2img_pipeline():
 
 
 @requires_cuda
-@requires_n_free_GBs(n=2.5)
 def test_img2img_pipeline():
+    check_n_free_GBs(n=2.5)
     load_pipeline("stabilityai/stable-diffusion-2-base", [0])
     image = Image.open("./assets/0.png")
     images = inference(
@@ -91,8 +87,8 @@ def test_img2img_pipeline():
 
 
 @requires_cuda
-@requires_n_free_GBs(n=2.5)
 def test_imginpainting_pipeline():
+    check_n_free_GBs(n=2.5)
     load_pipeline("stabilityai/stable-diffusion-2-inpainting", [0])
     image = Image.open("./assets/0.png")
     # mask image
