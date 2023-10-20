@@ -9,7 +9,11 @@ import pickle
 from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
-from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline,StableDiffusionInpaintPipeline
+from diffusers.pipelines.stable_diffusion import (
+    StableDiffusionPipeline,
+    StableDiffusionImg2ImgPipeline,
+    StableDiffusionInpaintPipeline,
+)
 from utils import ToGPUWrapper, dummy_checker, dummy_extractor, remove_nsfw
 from typing import Any, Dict, List, Optional, Union
 import random
@@ -41,7 +45,9 @@ def cuda_inference_process(
             print(
                 f"Creating and moving model to cuda:{device_id} ({torch.cuda.get_device_name(device_id)}).."
             )
-            model: DiffusionModel = DiffusionModel.from_pretrained(**model_kwargs).to(f"cuda:{device_id}")
+            model: DiffusionModel = DiffusionModel.from_pretrained(**model_kwargs).to(
+                f"cuda:{device_id}"
+            )
         else:
             mp_ass = mp_ass[worker_id]
             print("Model parallel worker component assignment:", mp_ass)
@@ -81,7 +87,7 @@ def cuda_inference_process(
             elif prompts == "reload_model":
                 print(f"Worker {device_id}- Reloading model from disk..")
                 model_path_or_id = kwargs
-                model = model.reload_model(model_path_or_id) # maintains device
+                model = model.reload_model(model_path_or_id)  # maintains device
                 # model loading needs ack
                 out_q.put(True)
             continue
@@ -96,22 +102,30 @@ def cuda_inference_process(
                 # for repeatable results: tensor generated on cpu for model parallel
                 # TODO unify model parallel interface, still using StableDiffusionPipeline
                 if mp_ass is not None:
-                    kwargs["generator"] = torch.Generator("cpu").manual_seed(kwargs["generator"])
+                    kwargs["generator"] = torch.Generator("cpu").manual_seed(
+                        kwargs["generator"]
+                    )
             else:
                 kwargs.pop("generator", None)
             try:
                 with torch.autocast("cuda"):
-                    images: List[Image.Image] = model(prompts, **kwargs).images
+                    images: List[Image.Image] = model(prompt=prompts, **kwargs).images
             except Exception as e:
                 print(f"[Model {device_id}] Error during inference:", e)
                 # TODO proper error propagation to master process
-                images = [Image.fromarray(np.zeros((kwargs["height"], kwargs["width"], 3), dtype=np.uint8))]
+                images = [
+                    Image.fromarray(
+                        np.zeros((kwargs["height"], kwargs["width"], 3), dtype=np.uint8)
+                    )
+                ]
         out_q.put(images)
 
 
 # class that handles multi-gpu models, mimicking original interface
 class StableDiffusionMultiProcessing(object):
-    def __init__(self, n_procs: int, devices: List[int], model_id_or_path: str="") -> None:
+    def __init__(
+        self, n_procs: int, devices: List[int], model_id_or_path: str = ""
+    ) -> None:
         self.devices = devices
         self.n = n_procs
         self._safety_checker = "dummy"
@@ -129,13 +143,12 @@ class StableDiffusionMultiProcessing(object):
             for _ in range(self.n):
                 res.append(self.outq.get())
         return res
-    
+
     def _send_cmd_to_all(self, k1, k2, wait_ack=True):
         return self._send_cmd([k1] * self.n, [k2] * self.n, wait_ack=wait_ack)
 
-    def __call__(self, inference_type: str, prompt, **kwargs):
+    def __call__(self, prompt, **kwargs):
         # run inference on different processes, each handles a model on a different GPU (split load evenly)
-        kwargs["inference_type"] = inference_type
         # FIXME when n_prompts < n, unused processes get an empty list as input, so we can always wait all processes
         prompt = [list(p) for p in np.array_split(prompt, self.n)]
         # request inference and block for result
@@ -196,14 +209,10 @@ class StableDiffusionMultiProcessing(object):
         # switch nsfw on, otherwise don't bother re-setting on processes
         if self.safety_checker == "dummy" and nsfw_on:
             self._safety_checker == "clip"
-            self._send_cmd(
-                ["safety_checker"] * self.n, ["clip"] * self.n, wait_ack=False
-            )
+            self._send_cmd_to_all("safety_checker", "clip", wait_ack=False)
         elif self.safety_checker == "clip" and not nsfw_on:
             self._safety_checker == "dummy"
-            self._send_cmd(
-                ["safety_checker"] * self.n, ["dummy"] * self.n, wait_ack=False
-            )
+            self._send_cmd_to_all("safety_checker", "dummy", wait_ack=False)
 
     @property
     def scheduler(self):
@@ -215,13 +224,13 @@ class StableDiffusionMultiProcessing(object):
         if self.scheduler == value or value not in schedulers:
             return
         self._scheduler = value
-        self._send_cmd(["scheduler"] * self.n, [value] * self.n, wait_ack=False)
+        self._send_cmd_to_all("scheduler", value, wait_ack=False)
 
-    def enable_attention_slicing(self):
-        self._send_cmd(["low_vram"] * self.n, ["auto"] * self.n, wait_ack=False)
+    def enable_attention_slicing(self, value):
+        self._send_cmd_to_all("low_vram", value, wait_ack=False)
 
-    def disable_attention_slicing(self):
-        self._send_cmd(["low_vram"] * self.n, [None] * self.n, wait_ack=False)
+    # def disable_attention_slicing(self):
+    # self._send_cmd_to_all("low_vram", None, wait_ack=False)
 
     def change_pipeline_type(self, new_type: str):
         assert new_type in ["text", "img2img", "inpaint"]
