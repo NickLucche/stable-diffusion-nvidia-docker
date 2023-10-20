@@ -1,18 +1,9 @@
 from typing import List, Union
-from diffusers import StableDiffusionPipeline
-from diffusers.pipelines.stable_diffusion import (
-    StableDiffusionImg2ImgPipeline,
-    StableDiffusionInpaintPipeline,
-)
 import torch
 from PIL import Image
-from diffusers.pipelines.stable_diffusion.safety_checker import (
-    StableDiffusionSafetyChecker,
-)
 import os
-from utils import ModelParts2GPUsAssigner, get_gpu_setting, dummy_checker, remove_nsfw
+from utils import ModelParts2GPUsAssigner, get_gpu_setting
 from parallel import StableDiffusionModelParallel, StableDiffusionMultiProcessing
-from schedulers import schedulers
 import numpy as np
 from sb import DiffusionModel
 
@@ -29,9 +20,8 @@ MIN_INPAINT_MASK_PERCENT = 0.1
 # FIXME devices=0,1 causes cuda error on memory access..?
 IS_MULTI, DEVICES = get_gpu_setting(os.environ.get("DEVICES", "0"))
 
-# TODO is_multi logic stays in main, `DiffusionModel` api will be mimicked by multipr one 
 # TODO docs
-def init_pipeline(model_or_path=MODEL_ID, devices: List[int]=DEVICES)->DiffusionModel:
+def init_pipeline(model_or_path=MODEL_ID, devices: List[int]=DEVICES)->Union[DiffusionModel, StableDiffusionMultiProcessing]:
     kwargs = dict(
         pretrained_model_name_or_path=model_or_path,
         revision="fp16" if fp16 else None,
@@ -54,7 +44,6 @@ def init_pipeline(model_or_path=MODEL_ID, devices: List[int]=DEVICES)->Diffusion
             )
         print("Assignments:", model_ass)
 
-    kwargs["pretrained_model_name_or_path"] = model_or_path
     # TODO move logic
     # if multi and pipe is not None:
         # avoid re-creating processes in multi-gpu mode, have them reload a different model
@@ -95,11 +84,13 @@ def inference(
     input_kwargs = dict(
         inference_type = "text",
         prompt=prompt,
+        # number of denoising steps run during inference (the higher the better)
         num_inference_steps=num_inference_steps,
         height=height,
         width=width,
         guidance_scale=guidance_scale,
-        generator=None,
+        # NOTE seed with multiples gpus will be different for each one but fixed!
+        generator=seed,
     )
     # input sketch has priority over input image
     if input_sketch is not None:
@@ -123,53 +114,19 @@ def inference(
         if np.count_nonzero(masked_image["mask"].convert("1")) < (
             width * height * MIN_INPAINT_MASK_PERCENT
         ):
-            # FIXME error handling
-            raise Exception("ERROR: mask is too small!")
+            raise ValueError("Mask is too small. Please paint-over a larger area")
         input_kwargs["image"] = masked_image["image"]
         input_kwargs["mask_image"] = masked_image["mask"]
         input_kwargs["inference_type"] = "inpaint"
 
-    # for repeatable results; tensor generated on cpu for model parallel
-    if multi:
-        # generator cant be pickled
-        # NOTE fixed seed with multiples gpus will be different for each one but fixed!
-        input_kwargs["generator"] = seed
-    elif seed is not None and seed > 0:
-        input_kwargs["generator"] = torch.Generator(
-            f"cuda:{devices[0]}" if not MP else "cpu"
-        ).manual_seed(seed)
+    pipe.set_nsfw(nsfw_filter)
 
-    if nsfw_filter:
-        if multi:
-            pipe.safety_checker = None
-        else:
-            pipe.safety_checker = safety.to(f"cuda:{devices[0]}")
-            pipe.feature_extractor = safety_extractor
-    else:
-        if multi:
-            pipe.safety_checker = dummy_checker
-        else:
-            # remove safety network from gpu
-            remove_nsfw(pipe)
-
-    if low_vram:
-        # needed on 16GB RAM 768x768 fp32
-        pipe.enable_attention_slicing()
-    else:
-        pipe.disable_attention_slicing()
+    # needed on 16GB RAM 768x768 fp32
+    pipe.enable_attention_slicing("auto" if low_vram else None)
 
     # set noise scheduler for inference
-    if noise_scheduler is not None and noise_scheduler in schedulers:
-        if multi:
-            pipe.scheduler = noise_scheduler
-        else:
-            # load scheduler from pre-trained config
-            s = getattr(schedulers[noise_scheduler], "from_config")(
-                pipe.scheduler.config
-            )
-            pipe.scheduler = s
+    pipe.scheduler = noise_scheduler
 
-    # number of denoising steps run during inference (the higher the better)
     with torch.autocast("cuda"):
         images: List[Image.Image] = pipe(**input_kwargs)["images"]
     return images

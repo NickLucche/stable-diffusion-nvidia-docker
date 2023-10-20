@@ -49,13 +49,12 @@ def cuda_inference_process(
             model = StableDiffusionModelParallel.from_pretrained(**model_kwargs).to(
                 mp_ass
             )
-        # # disable nsfw filter by default
-        # safety_checker, safety_extr = remove_nsfw(model)
-
-        # # create nsfw clip filter so we can re-set it if needed
-        # safety_checker = StableDiffusionSafetyChecker(
-        #     CLIPConfig(**model_kwargs.pop("clip_config"))
-        # )
+            # TODO add for model parallel, but likely to refactor too
+            # safety_checker, safety_extr = remove_nsfw(model)
+            # create nsfw clip filter so we can re-set it if needed
+            # safety_checker = StableDiffusionSafetyChecker(
+            #     CLIPConfig(**model_kwargs.pop("clip_config"))
+            # )
         out_q.put(True)
     except Exception as e:
         print(e)
@@ -73,23 +72,17 @@ def cuda_inference_process(
                 # TODO
                 raise NotImplementedError()
             elif prompts == "safety_checker":
-                # FIXME move both into StableDiffusionModelParallel
-                # safety checker needs to be moved to GPU (it can cause crashes)
-                if kwargs == "clip":
-                    model.safety_checker = safety_checker.to(f"cuda:{device_id}")
-                    model.feature_extractor = safety_extr
-                else:
-                    remove_nsfw(model)
+                # safety checker is also be moved to GPU (it can cause crashes) when 'clip' is passed
+                model.set_nsfw(kwargs == "clip")
             elif prompts == "scheduler":
-                s = getattr(schedulers[kwargs], "from_config")(model.scheduler.config)
-                model.scheduler = s
+                model.scheduler = kwargs
             elif prompts == "low_vram":
                 model.enable_attention_slicing(kwargs)
             elif prompts == "reload_model":
                 print(f"Worker {device_id}- Reloading model from disk..")
                 model_path_or_id = kwargs
                 model = model.reload_model(model_path_or_id) # maintains device
-                # send back ack
+                # model loading needs ack
                 out_q.put(True)
             continue
         if not len(prompts):
@@ -97,11 +90,13 @@ def cuda_inference_process(
         else:
             # actual inference
             # print("Inference", prompts, kwargs, model.device)
-            if kwargs["generator"] is not None and kwargs["generator"] > 0:
-                seed = kwargs["generator"] + worker_seed
-                kwargs["generator"] = torch.Generator(
-                    f"cuda:{device_id}" if mp_ass is None else "cpu"
-                ).manual_seed(seed)
+            if kwargs.get("generator", None) is not None and kwargs["generator"] > 0:
+                # NOTE different seed for each worker, but fixed!
+                kwargs["generator"] = kwargs["generator"] + worker_seed
+                # for repeatable results: tensor generated on cpu for model parallel
+                # TODO unify model parallel interface, still using StableDiffusionPipeline
+                if mp_ass is not None:
+                    kwargs["generator"] = torch.Generator("cpu").manual_seed(kwargs["generator"])
             else:
                 kwargs.pop("generator", None)
             try:
@@ -109,18 +104,20 @@ def cuda_inference_process(
                     images: List[Image.Image] = model(prompts, **kwargs).images
             except Exception as e:
                 print(f"[Model {device_id}] Error during inference:", e)
+                # TODO proper error propagation to master process
                 images = [Image.fromarray(np.zeros((kwargs["height"], kwargs["width"], 3), dtype=np.uint8))]
         out_q.put(images)
 
 
 # class that handles multi-gpu models, mimicking original interface
 class StableDiffusionMultiProcessing(object):
-    def __init__(self, n_procs: int, devices: List[int]) -> None:
+    def __init__(self, n_procs: int, devices: List[int], model_id_or_path: str="") -> None:
         self.devices = devices
         self.n = n_procs
         self._safety_checker = "dummy"
         self._scheduler = "PNDM"
         self._pipeline_type = "text"
+        self._pipe_name = model_id_or_path
 
     def _send_cmd(self, k1, k2, wait_ack=True):
         # send a cmd to all processes (put item in queue)
@@ -175,7 +172,7 @@ class StableDiffusionMultiProcessing(object):
             d = cls.outq.get()
             assert d
         # cls.pipes: List[StableDiffusionPipeline] = models
-        return cls(n_processes, devices)
+        return cls(n_processes, devices, kwargs["pretrained_model_name_or_path"])
 
     def __del__(self):
         # exit and join condition
@@ -239,6 +236,13 @@ class StableDiffusionMultiProcessing(object):
         self._safety_checker = "dummy"
         self._scheduler = "PNDM"
         self._pipeline_type = "text"
+
+    def set_nsfw(self, nsfw: bool):
+        # this will avoid unnecessary inter-process calls and only set if needed
+        if nsfw:
+            self.safety_checker = None
+        else:
+            self.safety_checker = dummy_checker
 
 
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
