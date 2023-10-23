@@ -1,4 +1,4 @@
-from main import load_pipeline, inference
+from main import init_pipeline, inference
 from diffusers import StableDiffusionPipeline
 from diffusers.pipelines.stable_diffusion import (
     StableDiffusionImg2ImgPipeline,
@@ -62,9 +62,9 @@ def test_txt2img(txt2img: StableDiffusionPipeline):
 @requires_cuda
 def test_txt2img_pipeline():
     check_n_free_GBs(n=2.5)
-    load_pipeline("stabilityai/stable-diffusion-2-base", [0])
+    pipe = init_pipeline("stabilityai/stable-diffusion-2-base", [0])
     images = inference(
-        PROMPT, num_images=1, num_inference_steps=3, height=512, width=512
+        pipe, PROMPT, num_images=1, num_inference_steps=3, height=512, width=512
     )
     assert len(images) == 1 and images[0].size == (512, 512)
 
@@ -72,9 +72,10 @@ def test_txt2img_pipeline():
 @requires_cuda
 def test_img2img_pipeline():
     check_n_free_GBs(n=2.5)
-    load_pipeline("stabilityai/stable-diffusion-2-base", [0])
+    pipe = init_pipeline("stabilityai/stable-diffusion-2-base", [0])
     image = Image.open("./assets/0.png")
     images = inference(
+        pipe,
         PROMPT,
         num_images=1,
         num_inference_steps=3,
@@ -84,18 +85,20 @@ def test_img2img_pipeline():
         inv_strenght=0.5,
     )
     assert len(images) == 1 and images[0].size == (512, 512)
+    # test multi-processing 
 
 
 @requires_cuda
 def test_imginpainting_pipeline():
     check_n_free_GBs(n=2.5)
-    load_pipeline("stabilityai/stable-diffusion-2-inpainting", [0])
+    pipe = init_pipeline("stabilityai/stable-diffusion-2-inpainting", [0])
     image = Image.open("./assets/0.png")
     # mask image
     mask = np.array(image)
     mask[:, : image.size[0] // 2] = 0
     mask = Image.fromarray(mask)
     images = inference(
+        pipe,
         PROMPT,
         num_images=1,
         num_inference_steps=3,

@@ -89,6 +89,7 @@ class DiffusionModel:
 
     @scheduler.setter
     def scheduler(self, scheduler: str):
+        assert isinstance(scheduler, str)
         if self.scheduler.__class__.__name__ == schedulers[scheduler].__name__:
             # avoid re-setting same scheduler
             pass

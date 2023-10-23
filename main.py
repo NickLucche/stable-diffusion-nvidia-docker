@@ -125,7 +125,8 @@ def inference(
     pipe.enable_attention_slicing("auto" if low_vram else None)
 
     # set noise scheduler for inference
-    pipe.scheduler = noise_scheduler
+    if noise_scheduler is not None:
+        pipe.scheduler = noise_scheduler
 
     with torch.autocast("cuda"):
         images: List[Image.Image] = pipe(**input_kwargs)["images"]
