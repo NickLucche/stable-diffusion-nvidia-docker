@@ -34,6 +34,20 @@ def requires_cuda(func):
 
     return wrapper
 
+def enable_multiprocessing(func):
+    def wrapper(*args, **kwargs):
+        from main import IS_MULTI
+        IS_MULTI = True
+        try:
+            res = func(*args, **kwargs)
+        except Exception as e:
+            raise e
+        finally:
+            IS_MULTI = False
+        return res
+
+    return wrapper
+
 
 def check_n_free_GBs(n: int = 0):
     # guard against executing tests where not enough space is present
@@ -68,6 +82,9 @@ def test_txt2img_pipeline():
     )
     assert len(images) == 1 and images[0].size == (512, 512)
 
+@enable_multiprocessing
+def test_txt2img_pipeline_multiprocessing():
+    test_txt2img_pipeline()
 
 @requires_cuda
 def test_img2img_pipeline():
@@ -87,6 +104,9 @@ def test_img2img_pipeline():
     assert len(images) == 1 and images[0].size == (512, 512)
     # test multi-processing 
 
+@enable_multiprocessing
+def test_img2img_pipeline_multiprocessing():
+    test_img2img_pipeline()
 
 @requires_cuda
 def test_imginpainting_pipeline():
@@ -112,3 +132,7 @@ def test_imginpainting_pipeline():
     assert (source[:, : image.size[0] // 2] - res[:, : image.size[0] // 2]).sum() < (
         source[:, image.size[0] // 2 :] - res[:, image.size[0] // 2 :]
     ).sum()
+
+@enable_multiprocessing
+def test_imginpainting_pipeline_multiprocessing():
+    test_imginpainting_pipeline()
