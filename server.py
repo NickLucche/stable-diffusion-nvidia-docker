@@ -16,13 +16,17 @@ def pop_up_exceptions(func):
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
-    from main import inference, MP as model_parallel, MODEL_ID, devices, load_pipeline
+    from main import inference, MP as model_parallel, init_pipeline, MODEL_ID, DEVICES
+
+    # create model(s)
+    pipeline = init_pipeline()
+
     @pop_up_exceptions
     def change_model(choice: str):
         if choice == "Base Model":
-            load_pipeline(MODEL_ID, devices)
+            pipeline.reload_model(MODEL_ID)
         elif choice == "Inpainting":
-            load_pipeline("stabilityai/stable-diffusion-2-inpainting", devices)
+            pipeline.reload_model("stabilityai/stable-diffusion-2-inpainting")
         return gr.Image.update(interactive=choice =="Inpainting")
 
     history = []
@@ -34,7 +38,7 @@ if __name__ == "__main__":
         # return [(np.random.randn(512, 512, 3)).astype(np.uint8)], [["test"]]
         if not len(prompt.strip()):
             return [], history
-        images = inference(prompt, *args)
+        images = inference(pipeline, prompt, *args)
         if not len(history) or [prompt] != history[-1]:
             history.append([prompt])
 
@@ -52,7 +56,7 @@ if __name__ == "__main__":
                         with gr.Column():
                             # FIXME crashes with weird error if no input
                             inputs.append(gr.Textbox(placeholder="Place your input prompt here and start dreaming!", label="Input Prompt")),
-                            inputs.append(gr.Slider(1, max(24, len(devices)*2), 1, step=1, label="Number of Images")),
+                            inputs.append(gr.Slider(1, max(24, len(DEVICES)*2), 1, step=1, label="Number of Images")),
                             inputs.append(gr.Slider(1, 200, 50, step=1, label="Steps")),
                             inputs.append(gr.Slider(256, 1024, 512, step=64, label="Height")),
                             inputs.append(gr.Slider(256, 1024, 512, step=64, label="Width")),
@@ -82,7 +86,7 @@ if __name__ == "__main__":
                 load_radio = gr.Radio(["Base Model", "Inpainting"], value="Base Model",label="Model to load:")
                 outputs.append(gr.Dataframe(col_count=(1, "fixed"),headers=["Prompt History"], interactive=True))
         # sample prompt from https://strikingloo.github.io/DALL-E-2-prompt-guide
-        # NOTE prompt MUST be first input, since it is passed here
+        # NOTE prompt MUST be first input, since UI order is forwarded as is to `inference` 
         gr.Examples(["A digital illustration of a medieval town, 4k, detailed, trending in artstation, fantasy"], inputs=inputs[:1])
         button.click(dream, inputs=inputs, outputs=outputs)
         # clear inputs and outputs

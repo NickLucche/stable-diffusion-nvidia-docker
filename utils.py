@@ -42,6 +42,7 @@ def remove_nsfw(
     model: StableDiffusionPipeline,
 ) -> Tuple[StableDiffusionSafetyChecker, CLIPFeatureExtractor]:
     nsfw_model: StableDiffusionSafetyChecker = model.safety_checker
+    # don't panic is safety_checker is already a dummy
     if isinstance(nsfw_model, StableDiffusionSafetyChecker):
         nsfw_model = nsfw_model.cpu()
     model.safety_checker = dummy_checker

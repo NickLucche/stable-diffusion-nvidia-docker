@@ -9,10 +9,15 @@ import pickle
 from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
-from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline,StableDiffusionInpaintPipeline
+from diffusers.pipelines.stable_diffusion import (
+    StableDiffusionPipeline,
+    StableDiffusionImg2ImgPipeline,
+    StableDiffusionInpaintPipeline,
+)
 from utils import ToGPUWrapper, dummy_checker, dummy_extractor, remove_nsfw
 from typing import Any, Dict, List, Optional, Union
 import random
+from sb import DiffusionModel
 
 ## Data Parallel: each process handles a copy of the model, executed on a different device ##
 ## +Model Parallel: model components are (potentially) scattered across different devices, each model handled by a process ##
@@ -32,6 +37,7 @@ def cuda_inference_process(
     mp_ass: Dict[int, int] = model_kwargs.pop("model_parallel_assignment", None)
     # each worker gets a different starting seed so they can be fixed and yet produce different results
     worker_seed = random.randint(0, int(2**32 - 1))
+    # TODO replace with custom `StableDiffusion` model, single process == multi-process
     try:
         if mp_ass is None:
             # TODO should we make sure we're downloading the model only once?
@@ -39,9 +45,9 @@ def cuda_inference_process(
             print(
                 f"Creating and moving model to cuda:{device_id} ({torch.cuda.get_device_name(device_id)}).."
             )
-            model: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(
-                **model_kwargs
-            ).to(f"cuda:{device_id}")
+            model: DiffusionModel = DiffusionModel.from_pretrained(**model_kwargs).to(
+                f"cuda:{device_id}"
+            )
         else:
             mp_ass = mp_ass[worker_id]
             print("Model parallel worker component assignment:", mp_ass)
@@ -49,14 +55,12 @@ def cuda_inference_process(
             model = StableDiffusionModelParallel.from_pretrained(**model_kwargs).to(
                 mp_ass
             )
-        # disable nsfw filter by default
-        safety_checker, safety_extr = remove_nsfw(model)
-
-        # create nsfw clip filter so we can re-set it if needed
-        # TODO perhaps we can skip this if no one cares about nsfw
-        safety_checker = StableDiffusionSafetyChecker(
-            CLIPConfig(**model_kwargs.pop("clip_config"))
-        )
+            # TODO add for model parallel, but likely to refactor too
+            # safety_checker, safety_extr = remove_nsfw(model)
+            # create nsfw clip filter so we can re-set it if needed
+            # safety_checker = StableDiffusionSafetyChecker(
+            #     CLIPConfig(**model_kwargs.pop("clip_config"))
+            # )
         out_q.put(True)
     except Exception as e:
         print(e)
@@ -74,29 +78,17 @@ def cuda_inference_process(
                 # TODO
                 raise NotImplementedError()
             elif prompts == "safety_checker":
-                # safety checker needs to be moved to GPU (it can cause crashes)
-                if kwargs == "clip":
-                    model.safety_checker = safety_checker.to(f"cuda:{device_id}")
-                    model.feature_extractor = safety_extr
-                else:
-                    remove_nsfw(model)
+                # safety checker is also be moved to GPU (it can cause crashes) when 'clip' is passed
+                model.set_nsfw(kwargs == "clip")
             elif prompts == "scheduler":
-                s = getattr(schedulers[kwargs], "from_config")(model.scheduler.config)
-                model.scheduler = s
+                model.scheduler = kwargs
             elif prompts == "low_vram":
                 model.enable_attention_slicing(kwargs)
-            elif prompts == "pipeline_type":
-                if kwargs == "text":
-                    model.__class__ = StableDiffusionPipeline
-                elif kwargs == "img2img":
-                    model.__class__ = StableDiffusionImg2ImgPipeline
-                elif kwargs == "inpaint":
-                    model.__class__ = StableDiffusionInpaintPipeline
             elif prompts == "reload_model":
                 print(f"Worker {device_id}- Reloading model from disk..")
-                model_kwargs["pretrained_model_name_or_path"] = kwargs
-                model = StableDiffusionPipeline.from_pretrained(**model_kwargs).to(f"cuda:{device_id}")
-                # send back ack
+                model_path_or_id = kwargs
+                model = model.reload_model(model_path_or_id)  # maintains device
+                # model loading needs ack
                 out_q.put(True)
             continue
         if not len(prompts):
@@ -104,30 +96,42 @@ def cuda_inference_process(
         else:
             # actual inference
             # print("Inference", prompts, kwargs, model.device)
-            if kwargs["generator"] is not None and kwargs["generator"] > 0:
-                seed = kwargs["generator"] + worker_seed
-                kwargs["generator"] = torch.Generator(
-                    f"cuda:{device_id}" if mp_ass is None else "cpu"
-                ).manual_seed(seed)
+            if kwargs.get("generator", None) is not None and kwargs["generator"] > 0:
+                # NOTE different seed for each worker, but fixed!
+                kwargs["generator"] = kwargs["generator"] + worker_seed
+                # for repeatable results: tensor generated on cpu for model parallel
+                # TODO unify model parallel interface, still using StableDiffusionPipeline
+                if mp_ass is not None:
+                    kwargs["generator"] = torch.Generator("cpu").manual_seed(
+                        kwargs["generator"]
+                    )
             else:
                 kwargs.pop("generator", None)
             try:
                 with torch.autocast("cuda"):
-                    images: List[Image.Image] = model(prompts, **kwargs).images
+                    images: List[Image.Image] = model(prompt=prompts, **kwargs).images
             except Exception as e:
                 print(f"[Model {device_id}] Error during inference:", e)
-                images = [Image.fromarray(np.zeros((kwargs["height"], kwargs["width"], 3), dtype=np.uint8))]
+                # TODO proper error propagation to master process
+                images = [
+                    Image.fromarray(
+                        np.zeros((kwargs["height"], kwargs["width"], 3), dtype=np.uint8)
+                    )
+                ]
         out_q.put(images)
 
 
 # class that handles multi-gpu models, mimicking original interface
 class StableDiffusionMultiProcessing(object):
-    def __init__(self, n_procs: int, devices: List[int]) -> None:
+    def __init__(
+        self, n_procs: int, devices: List[int], model_id_or_path: str = ""
+    ) -> None:
         self.devices = devices
         self.n = n_procs
         self._safety_checker = "dummy"
         self._scheduler = "PNDM"
         self._pipeline_type = "text"
+        self._pipe_name = model_id_or_path
 
     def _send_cmd(self, k1, k2, wait_ack=True):
         # send a cmd to all processes (put item in queue)
@@ -139,13 +143,12 @@ class StableDiffusionMultiProcessing(object):
             for _ in range(self.n):
                 res.append(self.outq.get())
         return res
-    
+
     def _send_cmd_to_all(self, k1, k2, wait_ack=True):
         return self._send_cmd([k1] * self.n, [k2] * self.n, wait_ack=wait_ack)
 
     def __call__(self, prompt, **kwargs):
         # run inference on different processes, each handles a model on a different GPU (split load evenly)
-        # print("prompts!", prompts)
         # FIXME when n_prompts < n, unused processes get an empty list as input, so we can always wait all processes
         prompt = [list(p) for p in np.array_split(prompt, self.n)]
         # request inference and block for result
@@ -182,7 +185,7 @@ class StableDiffusionMultiProcessing(object):
             d = cls.outq.get()
             assert d
         # cls.pipes: List[StableDiffusionPipeline] = models
-        return cls(n_processes, devices)
+        return cls(n_processes, devices, kwargs["pretrained_model_name_or_path"])
 
     def __del__(self):
         # exit and join condition
@@ -206,14 +209,10 @@ class StableDiffusionMultiProcessing(object):
         # switch nsfw on, otherwise don't bother re-setting on processes
         if self.safety_checker == "dummy" and nsfw_on:
             self._safety_checker == "clip"
-            self._send_cmd(
-                ["safety_checker"] * self.n, ["clip"] * self.n, wait_ack=False
-            )
+            self._send_cmd_to_all("safety_checker", "clip", wait_ack=False)
         elif self.safety_checker == "clip" and not nsfw_on:
             self._safety_checker == "dummy"
-            self._send_cmd(
-                ["safety_checker"] * self.n, ["dummy"] * self.n, wait_ack=False
-            )
+            self._send_cmd_to_all("safety_checker", "dummy", wait_ack=False)
 
     @property
     def scheduler(self):
@@ -225,13 +224,13 @@ class StableDiffusionMultiProcessing(object):
         if self.scheduler == value or value not in schedulers:
             return
         self._scheduler = value
-        self._send_cmd(["scheduler"] * self.n, [value] * self.n, wait_ack=False)
+        self._send_cmd_to_all("scheduler", value, wait_ack=False)
 
-    def enable_attention_slicing(self):
-        self._send_cmd(["low_vram"] * self.n, ["auto"] * self.n, wait_ack=False)
+    def enable_attention_slicing(self, value):
+        self._send_cmd_to_all("low_vram", value, wait_ack=False)
 
-    def disable_attention_slicing(self):
-        self._send_cmd(["low_vram"] * self.n, [None] * self.n, wait_ack=False)
+    # def disable_attention_slicing(self):
+    # self._send_cmd_to_all("low_vram", None, wait_ack=False)
 
     def change_pipeline_type(self, new_type: str):
         assert new_type in ["text", "img2img", "inpaint"]
@@ -246,6 +245,13 @@ class StableDiffusionMultiProcessing(object):
         self._safety_checker = "dummy"
         self._scheduler = "PNDM"
         self._pipeline_type = "text"
+
+    def set_nsfw(self, nsfw: bool):
+        # this will avoid unnecessary inter-process calls and only set if needed
+        if nsfw:
+            self.safety_checker = None
+        else:
+            self.safety_checker = dummy_checker
 
 
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
